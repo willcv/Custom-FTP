@@ -11,11 +11,15 @@
 #include <arpa/inet.h>
 #include <sys/wait.h>
 #include <string>
+#include <pthread.h>
+#include <iostream>
 
 #define CLIENT_PORT "25581"
 #define SERVER_PORT "25580"
 #define localhost "127.0.0.1"
 #define MAXLINE 1024
+
+int sock_fd = 0;
 
 using namespace std;
 
@@ -66,15 +70,30 @@ int SetupUDPSocket(const char *port)
     return sockfd;
 }
 
+void *ClientSendTo(void *serverinfo)
+{
+
+    int numbytes;
+    struct addrinfo *servinfo = (struct addrinfo *)serverinfo;
+    string hello = "Hello from client";
+
+    if ((numbytes = sendto(sock_fd, hello.data(), hello.length(), 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
+    {
+        perror("Central: ServerP sendto num nodes");
+        exit(1);
+    }
+
+    printf("Hello message sent.\n");
+}
+
 // Driver code
 int main()
 {
-    int sockfd = SetupUDPSocket(CLIENT_PORT);
+    sock_fd = SetupUDPSocket(CLIENT_PORT);
 
     struct addrinfo hints;
     struct addrinfo *servinfo;
     int status;
-    int numbytes;
 
     // first, load up address structs with getaddrinfo():
 
@@ -91,15 +110,16 @@ int main()
         exit(1);
     }
 
-    string hello = "Hello from client";
-
-    if ((numbytes = sendto(sockfd, hello.data(), hello.length(), 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
+    pthread_t tid[2];
+    for (int i = 0; i < 2; i++)
     {
-        perror("Central: ServerP sendto num nodes");
-        exit(1);
+        pthread_create(&tid[i], NULL, ClientSendTo, (void*)servinfo);
+    }
+    for (int i = 0; i < 2; i++)
+    {
+        pthread_join(tid[i],NULL);
     }
 
-    printf("Hello message sent.\n");
-    close(sockfd);
+    close(sock_fd);
     return 0;
 }

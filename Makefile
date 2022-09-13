@@ -7,7 +7,7 @@ server.out: server.cpp
 	@ $(CC) -o server server.cpp
 
 client.out: client.cpp
-	@ $(CC) -o client client.cpp
+	@ $(CC) -o client client.cpp -lpthread
 
 clean:
 	@ $(RM) server client

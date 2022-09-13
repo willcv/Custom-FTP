@@ -75,16 +75,19 @@ int main()
     int numbytes;
 
     char buffer[MAXLINE];
-    printf("Here\n");
 
-    if ((numbytes = recvfrom(sockfd, (char*)buffer, MAXLINE, 0, (struct sockaddr *)&cliaddr, &addr_len)) == -1)
+    while (1)
     {
-        perror("ServerP: Central recvfrom scores list");
-        exit(1);
+        if ((numbytes = recvfrom(sockfd, (char *)buffer, MAXLINE, 0, (struct sockaddr *)&cliaddr, &addr_len)) == -1)
+        {
+            perror("ServerP: Central recvfrom scores list");
+            exit(1);
+        }
+
+        buffer[numbytes] = '\0';
+        printf("Client : %s\n", buffer);
     }
 
-    buffer[numbytes] = '\0';
-    printf("Client : %s\n", buffer);
     close(sockfd);
 
     return 0;
