@@ -14,13 +14,14 @@
 #include <pthread.h>
 #include <iostream>
 #include <optional>
+#include <fstream>
 #include "safequeue.h"
 
 #define CLIENT_PORT "25581"
 #define SERVER_PORT "25580"
 #define localhost "127.0.0.1"
 #define MAXLINE 1024
-#define FILE_SIZE 16777216
+#define FILE_SIZE 16*1024*1024
 #define UDP_SIZE 65507
 #define UDP_DATA_SIZE UDP_SIZE - 2
 
@@ -29,6 +30,7 @@ using namespace std;
 int sock_fd = 0;
 ThreadsafeQueue<int> send_queue;
 pthread_mutex_t mt = PTHREAD_MUTEX_INITIALIZER;
+char* main_buf;
 
 // UDP Socket setup code from Beej’s Guide to Network Programming
 int SetupUDPSocket(const char *port)
@@ -80,26 +82,50 @@ int SetupUDPSocket(const char *port)
 int ReadQueue()
 {
     optional<int> num = send_queue.pop();
-    if(!num.has_value())
-        return 0;
+    if (!num.has_value())
+        return -1;
     else
         return num.value();
+}
+
+char *FileMap(int sequence_num, char *main_buffer)
+{
+    return &main_buffer[sequence_num * UDP_DATA_SIZE];
 }
 
 // Client sends to server
 void *ClientSendTo(void *serverinfo)
 {
-
+    char small_buf[UDP_SIZE];
     int numbytes;
     struct addrinfo *servinfo = (struct addrinfo *)serverinfo;
-    string hello = "Hello from client";
+    int sequence_num;
+    while ((sequence_num = ReadQueue()) != -1)
+    {
+        memcpy(&small_buf[2], &main_buf[sequence_num * UDP_DATA_SIZE], UDP_DATA_SIZE);
+        small_buf[0] = (sequence_num >> 8) & 0xFF;
+        small_buf[1] = sequence_num & 0xFF;
+        if ((numbytes = sendto(sock_fd, small_buf, UDP_SIZE, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
+        {
+            perror("Central: ServerP sendto num nodes");
+            exit(1);
+        }
+    }
+
+    // int numbytes;
+    // struct addrinfo *servinfo = (struct addrinfo *)serverinfo;
+    // int chunk_index;
+    // while ((chunk_index = ReadQueue()) != -1)
+    // {
+    //     string temp = to_string(chunk_index);
+    //     if ((numbytes = sendto(sock_fd, temp.data(), temp.length(), 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
+    //     {
+    //         perror("Central: ServerP sendto num nodes");
+    //         exit(1);
+    //     }
+    // }
     // if(seq_no== 107)
     // sendto(sock_fd, FileChunk(seq_no))
-    if ((numbytes = sendto(sock_fd, hello.data(), hello.length(), 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
-    {
-        perror("Central: ServerP sendto num nodes");
-        exit(1);
-    }
 
     printf("Hello message sent.\n");
 }
@@ -128,10 +154,16 @@ int main()
         exit(1);
     }
 
-    // Initialize queue
-    int file_last_index = (FILE_SIZE-1)/UDP_DATA_SIZE;
+    // Read file and initialize main buffer
+    ifstream input_file("data.bin");
+    main_buf = new char[FILE_SIZE];
 
-    for(int i = 0; i<=file_last_index; i++)
+    input_file.read(main_buf, FILE_SIZE);
+
+    // Initialize queue
+    int file_last_index = (FILE_SIZE - 1) / UDP_DATA_SIZE;
+
+    for (int i = 0; i <= file_last_index; i++)
     {
         send_queue.push(i);
     }
@@ -139,11 +171,11 @@ int main()
     pthread_t tid[5];
     for (int i = 0; i < 5; i++)
     {
-        pthread_create(&tid[i], NULL, ClientSendTo, (void*)servinfo);
+        pthread_create(&tid[i], NULL, ClientSendTo, (void *)servinfo);
     }
     for (int i = 0; i < 5; i++)
     {
-        pthread_join(tid[i],NULL);
+        pthread_join(tid[i], NULL);
     }
 
     close(sock_fd);

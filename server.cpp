@@ -11,11 +11,12 @@
 #include <arpa/inet.h>
 #include <sys/wait.h>
 #include <string>
+#include <iostream>
 
 #define CLIENT_PORT "25581"
 #define SERVER_PORT "25580"
 #define localhost "127.0.0.1"
-#define MAXLINE 1024
+#define UDP_SIZE 65507
 
 using namespace std;
 
@@ -74,20 +75,33 @@ int main()
     socklen_t addr_len = sizeof(cliaddr);
     int numbytes;
 
-    char buffer[MAXLINE];
+    // char buffer[MAXLINE];
 
+    // while (1)
+    // {
+    //     if ((numbytes = recvfrom(sockfd, (char *)buffer, MAXLINE, 0, (struct sockaddr *)&cliaddr, &addr_len)) == -1)
+    //     {
+    //         perror("ServerP: Central recvfrom scores list");
+    //         exit(1);
+    //     }
+
+    //     buffer[numbytes] = '\0';
+    //     printf("Client : %s\n", buffer);
+    // }
+
+    char buffer[UDP_SIZE];
     while (1)
     {
-        if ((numbytes = recvfrom(sockfd, (char *)buffer, MAXLINE, 0, (struct sockaddr *)&cliaddr, &addr_len)) == -1)
+
+        if ((numbytes = recvfrom(sockfd, (char *)buffer, UDP_SIZE, 0, (struct sockaddr *)&cliaddr, &addr_len)) == -1)
         {
             perror("ServerP: Central recvfrom scores list");
             exit(1);
         }
-
-        buffer[numbytes] = '\0';
-        printf("Client : %s\n", buffer);
+        int sequence_num = (buffer[0] << 8) | buffer[1] & 0xFF;
+        cout<<sequence_num<<" "<<numbytes<<"\n";
     }
-
+    printf("Hello message sent.\n");
     close(sockfd);
 
     return 0;
