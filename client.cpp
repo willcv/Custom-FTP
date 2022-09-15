@@ -13,15 +13,22 @@
 #include <string>
 #include <pthread.h>
 #include <iostream>
+#include <optional>
+#include "safequeue.h"
 
 #define CLIENT_PORT "25581"
 #define SERVER_PORT "25580"
 #define localhost "127.0.0.1"
 #define MAXLINE 1024
-
-int sock_fd = 0;
+#define FILE_SIZE 16777216
+#define UDP_SIZE 65507
+#define UDP_DATA_SIZE UDP_SIZE - 2
 
 using namespace std;
+
+int sock_fd = 0;
+ThreadsafeQueue<int> send_queue;
+pthread_mutex_t mt = PTHREAD_MUTEX_INITIALIZER;
 
 // UDP Socket setup code from Beej’s Guide to Network Programming
 int SetupUDPSocket(const char *port)
@@ -70,13 +77,24 @@ int SetupUDPSocket(const char *port)
     return sockfd;
 }
 
+int ReadQueue()
+{
+    optional<int> num = send_queue.pop();
+    if(!num.has_value())
+        return 0;
+    else
+        return num.value();
+}
+
+// Client sends to server
 void *ClientSendTo(void *serverinfo)
 {
 
     int numbytes;
     struct addrinfo *servinfo = (struct addrinfo *)serverinfo;
     string hello = "Hello from client";
-
+    // if(seq_no== 107)
+    // sendto(sock_fd, FileChunk(seq_no))
     if ((numbytes = sendto(sock_fd, hello.data(), hello.length(), 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
     {
         perror("Central: ServerP sendto num nodes");
@@ -110,12 +128,20 @@ int main()
         exit(1);
     }
 
-    pthread_t tid[2];
-    for (int i = 0; i < 2; i++)
+    // Initialize queue
+    int file_last_index = (FILE_SIZE-1)/UDP_DATA_SIZE;
+
+    for(int i = 0; i<=file_last_index; i++)
+    {
+        send_queue.push(i);
+    }
+
+    pthread_t tid[5];
+    for (int i = 0; i < 5; i++)
     {
         pthread_create(&tid[i], NULL, ClientSendTo, (void*)servinfo);
     }
-    for (int i = 0; i < 2; i++)
+    for (int i = 0; i < 5; i++)
     {
         pthread_join(tid[i],NULL);
     }

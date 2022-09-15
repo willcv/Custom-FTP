@@ -4,10 +4,10 @@ CC = g++
 all: server.out client.out
 
 server.out: server.cpp
-	@ $(CC) -o server server.cpp
+	@ $(CC) -std=c++17 -o server server.cpp
 
 client.out: client.cpp
-	@ $(CC) -o client client.cpp -lpthread
+	@ $(CC) -std=c++17 -o client client.cpp -lpthread
 
 clean:
 	@ $(RM) server client
