@@ -11,13 +11,22 @@
 #include <arpa/inet.h>
 #include <sys/wait.h>
 #include <string>
+#include <unordered_set>
 
 #define CLIENT_PORT "25581"
 #define SERVER_PORT "25580"
+#define MAIN_BUF_SIZE 65536*16384
+#define UDP_SIZE 65507
+#define UDP_DATA_SIZE UDP_SIZE - 4
+
 #define localhost "127.0.0.1"
-#define MAXLINE 1024
 
 using namespace std;
+
+int sockfd;
+int itr_done;
+unordered_set <int> neg_acks;
+
 
 // UDP Socket setup code from Beej’s Guide to Network Programming
 int SetupUDPSocket(const char *port)
@@ -66,10 +75,25 @@ int SetupUDPSocket(const char *port)
     return sockfd;
 }
 
+void *send_thread(void*) {
+
+
+}
+
+void *recv_thread(void*) {
+    
+    int queue_empty = 1;
+    while(!queue_empty) {
+        
+       
+
+    }
+}
+
 // Driver code
 int main()
 {
-    int sockfd = SetupUDPSocket(SERVER_PORT);
+    sockfd = SetupUDPSocket(SERVER_PORT);
     struct sockaddr_in cliaddr;
     socklen_t addr_len = sizeof(cliaddr);
     int numbytes;
@@ -91,4 +115,4 @@ int main()
     close(sockfd);
 
     return 0;
-}
+:}
