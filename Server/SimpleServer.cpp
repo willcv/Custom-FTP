@@ -8,11 +8,15 @@
 #include <netinet/in.h> 
 #include <string>
 #include <vector>
+<<<<<<< HEAD
 #include <algorithm>
 #include <fstream>
 #include <unistd.h>
 #include <pthread.h>
 
+=======
+#include <algorithm>    
+>>>>>>> 53e5cfaac06dc39af278b0fcc291a0f2ba7bd455
 #define PORT     8080 
 #define UDP_SIZE 65507
 #define UDP_DATA_SIZE UDP_SIZE - 4
