@@ -7,7 +7,8 @@
 #include <arpa/inet.h> 
 #include <netinet/in.h> 
 #include <string>
-    
+#include <vector>
+#include <algorithm>    
 #define PORT     8080 
 #define MAXLINE 65536
 

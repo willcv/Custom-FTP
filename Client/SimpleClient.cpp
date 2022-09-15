@@ -14,7 +14,7 @@
 #include <random>
 #include <iterator>
 #include <algorithm>
-
+#include <pthread.h>
 
 #define PORT     8080 
 #define MAXLINE 1024
@@ -24,6 +24,8 @@
 #define UDP_DATA_SIZE UDP_SIZE - 4
 #define ACK_SIZE 4096
 using namespace std;
+
+pthread_mutex_t queue_mutex;
 
 template<typename Iter, typename RandomGenerator>
 Iter select_randomly(Iter start, Iter end, RandomGenerator& g) {
@@ -39,133 +41,144 @@ Iter select_randomly(Iter start, Iter end) {
     return select_randomly(start, end, gen);
 }
 
+vector<int> seq_num_queue;
+char* mainBuf = new char[MAIN_BUF_SIZE];
+int sock_fd;
+struct sockaddr_in servaddr; 
+
+void access_queue(vector<int> & queue, int &queue_size, int &sel_seq_no) {
+    pthread_mutex_lock(&queue_mutex);
+    queue_size = queue.size();
+    sel_seq_no = *select_randomly(queue.begin(), queue.end());
+    pthread_mutex_unlock(&queue_mutex);
+}
+
+void load_smallBuf (int seq_no, int queue_size, char *smallBuf) {
+
+        memcpy(&smallBuf[4], &mainBuf[seq_no*UDP_DATA_SIZE], UDP_DATA_SIZE);
+        // Put sequence number into first two bytes
+        smallBuf[0] = (seq_no >> 8) & 0xFF;
+        smallBuf[1] = seq_no & 0xFF;
+
+	// Put the queue size into second two bytes
+	smallBuf[2] = (queue_size >> 8) & 0xFF;
+        smallBuf[3] = queue_size & 0xFF;
+}
+
+void *send_thread (void*) {
+    
+    printf("Send Thread started\n");
+    int queue_size, sel_seq_no;
+    access_queue(seq_num_queue, queue_size, sel_seq_no);
+
+    char smallBuf[UDP_SIZE];
+
+    while(queue_size) {
+        //Send chunk from file
+  	load_smallBuf(sel_seq_no, queue_size, smallBuf);
+        printf("Sending Seq no: %d, queue size %d\n", sel_seq_no, queue_size);
+        sendto(sock_fd, smallBuf, UDP_SIZE, 0, (const struct sockaddr *) &servaddr, sizeof(servaddr));
+	access_queue(seq_num_queue, queue_size, sel_seq_no);
+        usleep(50000);
+    }
+}
+
+void parse_ack_packet (char * recvBuffer, int recvBufSize, vector<int> & recvd_acks) {
+    
+    string incoming_num = ""; 
+    for (int i = 0; i < recvBufSize; i++) {
+
+        //Exit if end of line reached
+	if (recvBuffer[i] == '\0') {
+			
+            break;
+        } 
+
+	//Command fields are separated by a space
+        if (recvBuffer[i] == ' ') {
+
+            // Remove seq num from queue if acked
+            int seq_to_remove = stoi(incoming_num);
+	    recvd_acks.push_back(seq_to_remove);
+            incoming_num = "";
+	    continue;
+	}
+
+	incoming_num += recvBuffer[i];
+    }
+}
+
+void remove_seq_no(vector<int> & seq_num_queue, vector<int> &recvd_acks, int &queue_size) {
+    pthread_mutex_lock(&queue_mutex);
+    for (auto &recvd_ack : recvd_acks) {
+        printf("recvd ack %d\n", recvd_ack);
+        std::vector<int>::iterator position = std::find(seq_num_queue.begin(), seq_num_queue.end(), recvd_ack);
+        if (position != seq_num_queue.end()) // == myVector.end() means the element was not found
+            seq_num_queue.erase(position);
+    }
+    queue_size = seq_num_queue.size();
+    pthread_mutex_unlock(&queue_mutex);
+}
+
+void *recv_thread (void*) {
+
+    printf("Recv Thread Started\n");
+    while (1) {
+
+	char recvBuffer[ACK_SIZE];
+        int servAddrLen = sizeof(servaddr); 
+        int n = recvfrom(sock_fd, (char *)recvBuffer, ACK_SIZE,  
+            MSG_WAITALL, (struct sockaddr *) &servaddr, (socklen_t*) &servAddrLen); 
+
+	recvBuffer[n] = '\0';
+        printf("Received %s\n", recvBuffer);
+        vector<int> recvd_acks;
+	parse_ack_packet(recvBuffer, n, recvd_acks);
+        int queue_size;
+        remove_seq_no(seq_num_queue, recvd_acks, queue_size);
+
+        if (queue_size == 0)
+            break;
+    }
+}
+
+
+
 // Driver code 
 int main() { 
-    int sockfd; 
-    fd_set readfds, masterfds;
-    struct timeval timeout;
-    timeout.tv_sec = 0;
-    timeout.tv_usec = 500000;
-    
-    string hello = "Hello from client"; 
-    struct sockaddr_in     servaddr; 
     
     ifstream bigFile("short.data");
-    char* mainBuf = new char[MAIN_BUF_SIZE];
 
     int count = 0; 
     char buffer[1024];
     bigFile.read(mainBuf, MAIN_BUF_SIZE);
     
-   // while (bigFile) {
-   // 	bigFile.read(buffer, bufferSize);
-   //     // process data in buffer
-   //     memcpy(&smallBuf, &buffer, 128);
-   //     printf("%d: %s\n", count, smallBuf);
-   //	count++;
-   // }
-
-    char smallBuf[UDP_SIZE];
-
-
-
-
-    if ( (sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0 ) { 
+    if ( (sock_fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0 ) { 
         perror("socket creation failed"); 
         exit(EXIT_FAILURE); 
     } 
     
-    memset(&servaddr, 0, sizeof(servaddr)); 
+    // memset(&servaddr, 0, sizeof(servaddr)); 
         
     // Filling server information 
     servaddr.sin_family = AF_INET; 
     servaddr.sin_port = htons(PORT); 
-    servaddr.sin_addr.s_addr = inet_addr("10.0.2.102"); 
+    servaddr.sin_addr.s_addr = inet_addr("10.0.2.240"); 
         
     // Initialize queue vector
     int max_seq_num = 256;
-    vector<int> seq_num_queue;
     for (int i = 0; i < max_seq_num; i++) {
         seq_num_queue.push_back(i);
     }
-
-   FD_ZERO(&masterfds);
-   FD_SET(sockfd, &masterfds);
-
-
-    int n, len; 
-    int sequence_number = 0;
-    int loop_count = 1;
-    while(seq_num_queue.size()){
-
-	int curr_seq_num = *select_randomly(seq_num_queue.begin(), seq_num_queue.end());
-    	
-        memcpy(&smallBuf[4], &mainBuf[curr_seq_num*UDP_DATA_SIZE], UDP_DATA_SIZE);
-        // Put sequence number into first two bytes
-        smallBuf[0] = (curr_seq_num >> 8) & 0xFF;
-        smallBuf[1] = curr_seq_num & 0xFF;
-
-	// Put the queue size into second two bytes
-	int queue_size = seq_num_queue.size();
-	printf("seq_queue size %d\n", (int) queue_size);
-	smallBuf[2] = (queue_size >> 8) & 0xFF;
-        smallBuf[3] = queue_size & 0xFF;
-
-	printf("%d\n", (unsigned char) smallBuf[10]);
-        for (int i = 0; i < 10; i++)
-        {
-            printf("%02X", (unsigned char) smallBuf[i]);
-        }
-	printf("\n");
-        sendto(sockfd, smallBuf, UDP_SIZE, 
-            MSG_CONFIRM, (const struct sockaddr *) &servaddr, sizeof(servaddr)); 
-        
-	printf("Sequence No Sent: %d\n", curr_seq_num);
-
-	char recvBuffer[ACK_SIZE];
-        int servAddrLen = sizeof(servaddr); 
-        n = recvfrom(sockfd, (char *)recvBuffer, ACK_SIZE,  
-            MSG_WAITALL, (struct sockaddr *) &servaddr, (socklen_t*) &servAddrLen); 
-            
-        recvBuffer[n] = '\0'; 
-        printf("Server : %s\n", recvBuffer); 
-
-	// Parse numbers from ack packet
-        string incoming_num = "";	 
-        for (int i = 0; i < n; i++) {
-
-            //Exit if end of line reached
-	    if (recvBuffer[i] == '\0') {
-			
-                break;
-            } 
-
-	    //Command fields are separated by a space
-            if (recvBuffer[i] == ' ') {
-
-                // Remove seq num from queue if acked
-		int seq_to_remove = stoi(incoming_num);
-		printf("Seq to remove: %d\n", seq_to_remove);
-                std::vector<int>::iterator position = std::find(seq_num_queue.begin(), seq_num_queue.end(), seq_to_remove);
-                if (position != seq_num_queue.end()) // == myVector.end() means the element was not found
-                    seq_num_queue.erase(position);
-		printf("Seq queue size: %d\n", (int) seq_num_queue.size());
-		incoming_num = "";
-		continue;
-	    }
-
-	    incoming_num += recvBuffer[i];
-        }
-
-	loop_count ++;
-
-    }
-            
-    //n = recvfrom(sockfd, (char *)buffer, MAXLINE,  
-    //            MSG_WAITALL, (struct sockaddr *) &servaddr, (socklen_t*) &len); 
-    //buffer[n] = '\0'; 
-    //printf("Server : %s\n", buffer); 
     
-    close(sockfd); 
+    printf("Starting threads\n"); 
+    pthread_t tid[2];
+    
+    pthread_create(&tid[0], NULL, send_thread, NULL);
+    pthread_create(&tid[1], NULL, recv_thread, NULL);
+
+    pthread_join(tid[0],NULL);
+    pthread_join(tid[1],NULL);
+    close(sock_fd); 
     return 0; 
 }
