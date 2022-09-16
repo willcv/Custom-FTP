@@ -16,7 +16,7 @@
 #define CLIENT_PORT "25581"
 #define SERVER_PORT "25580"
 #define MAIN_BUF_SIZE 65536*16384
-#define UDP_SIZE 65507
+#define UDP_SIZE 1500
 #define UDP_DATA_SIZE (UDP_SIZE - 4)
 #define MAX_SEQ_NUM (MAIN_BUF_SIZE - (MAIN_BUF_SIZE % UDP_DATA_SIZE))/UDP_DATA_SIZE
 #define localhost "127.0.0.1"
@@ -50,7 +50,7 @@ int SetupUDPSocket(const char *port)
 
     // error checking for getaddrinfo
 
-    if ((status = getaddrinfo(, port, &hints, &res)) != 0)
+    if ((status = getaddrinfo("10.0.1.170", port, &hints, &res)) != 0)
     {
         fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
         exit(1);
@@ -147,6 +147,7 @@ void *recv_thread(void* clientinfo) {
             hash_size = remaining_packet_hash.size();
             pthread_mutex_unlock(&hash_mutex);
             printf("timeout has occurred\n");
+            printf("Packets recvd %d\n", (MAX_SEQ_NUM - hash_size));
             continue;
         }
 
@@ -216,12 +217,15 @@ int main()
     }
 
     mainBuf = new char[MAIN_BUF_SIZE];
-    pthread_t tid[2];
-    pthread_create(&tid[0], NULL, recv_thread, (void*) &cliaddr);
-    pthread_create(&tid[1], NULL, send_thread, (void*) servinfo);
+    pthread_t tid[6];
+    for (int i = 0; i < 5; i++) {
+        pthread_create(&tid[i], NULL, recv_thread, (void*) &cliaddr);
+    }
+    pthread_create(&tid[5], NULL, send_thread, (void*) servinfo);
     
-    pthread_join(tid[0], NULL);
-    pthread_join(tid[1], NULL);
+    for (int i = 0; i < 6; i++) {
+        pthread_join(tid[i], NULL);
+    }
     close(sockfd);
 
     return 0;
