@@ -16,15 +16,18 @@
 #include <optional>
 #include <fstream>
 #include "safequeue.h"
+#include <chrono>
 
 #define CLIENT_PORT "25581"
 #define SERVER_PORT "25580"
 #define localhost "127.0.0.1"
-#define MAXLINE 1024
+#define MAXLINE 500
 #define FILE_SIZE 16*1024*1024
-#define UDP_SIZE 1500
-#define UDP_DATA_SIZE UDP_SIZE - 4
+#define UDP_SIZE 1472
+#define HEADER_SIZE 5
+#define UDP_DATA_SIZE UDP_SIZE - HEADER_SIZE
 
+using namespace std::chrono;
 using namespace std;
 
 int sock_fd = 0;
@@ -48,7 +51,7 @@ int SetupUDPSocket(const char *port)
 
     // error checking for getaddrinfo
 
-    if ((status = getaddrinfo("10.0.2.240", port, &hints, &res)) != 0)
+    if ((status = getaddrinfo("10.0.1.115", port, &hints, &res)) != 0)
     {
         fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
         exit(1);
@@ -102,9 +105,11 @@ void *ClientSendTo(void *serverinfo)
     int sequence_num;
     while ((sequence_num = ReadQueue()) != -1)
     {
-        memcpy(&small_buf[4], &main_buf[sequence_num * UDP_DATA_SIZE], UDP_DATA_SIZE);
-        small_buf[0] = (sequence_num >> 8) & 0xFF;
-        small_buf[1] = sequence_num & 0xFF;
+        memcpy(&small_buf[HEADER_SIZE], &main_buf[(sequence_num * UDP_DATA_SIZE) % FILE_SIZE], UDP_DATA_SIZE);
+        memcpy(&small_buf, &sequence_num, sizeof(sequence_num));
+        
+        //small_buf[0] = (sequence_num >> 8) & 0xFF;
+        //small_buf[1] = sequence_num & 0xFF;
         if ((numbytes = sendto(sock_fd, small_buf, UDP_SIZE, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
         {
             perror("Central: ServerP sendto num nodes");
@@ -149,7 +154,7 @@ int main()
     // error checking for getaddrinfo
     // getaddrinfo used to get server address
 
-    if ((status = getaddrinfo("10.0.1.170", SERVER_PORT, &hints, &servinfo)) != 0)
+    if ((status = getaddrinfo("10.0.2.66", SERVER_PORT, &hints, &servinfo)) != 0)
     {
         fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
         exit(1);
@@ -164,13 +169,16 @@ int main()
     // Initialize queue
     int file_last_index = (FILE_SIZE - 1) / UDP_DATA_SIZE;
 
+for (int j = 0; j < 16; j++) {
     for (int i = 0; i <= file_last_index; i++)
     {
-        send_queue.push(i);
+        send_queue.push(file_last_index*j + i);
     }
+}
 
+    auto start = high_resolution_clock::now();
     pthread_t tid[5];
-    for (int i = 0; i < 1; i++)
+    for (int i = 0; i < 3; i++)
     {
         pthread_create(&tid[i], NULL, ClientSendTo, (void *)servinfo);
     }
@@ -178,7 +186,10 @@ int main()
     {
         pthread_join(tid[i], NULL);
     }
+    auto stop = high_resolution_clock::now();
 
+    auto duration = duration_cast<microseconds>(stop - start);
+    cout << duration.count() << endl;
     close(sock_fd);
     return 0;
 }
