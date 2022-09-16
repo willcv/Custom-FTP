@@ -13,18 +13,26 @@
 #include <string>
 #include <unordered_set>
 
-#define CLIENT_PORT "25581"
-#define SERVER_PORT "25580"
+#define THREAD_NUM 5
+#define RECV_T1_PORT "25581"
+#define RECV_T2_PORT "25582"
+#define RECV_T3_PORT "25583"
+#define RECV_T4_PORT "25584"
+#define RECV_T5_PORT "25585"
+#define SEND_PORT "25580"
+
 #define MAIN_BUF_SIZE 65536*16384
-#define UDP_SIZE 1472
+#define UDP_SIZE 32768
 #define HEADER_SIZE 5
 #define UDP_DATA_SIZE (UDP_SIZE - HEADER_SIZE)
+#define ACK_HEADER_SIZE 1
+#define UDP_ACK_SIZE (UDP_SIZE - ACK_HEADER_SIZE)
 #define MAX_SEQ_NUM (MAIN_BUF_SIZE - (MAIN_BUF_SIZE % UDP_DATA_SIZE))/UDP_DATA_SIZE
 #define localhost "127.0.0.1"
 
 using namespace std;
 
-int sockfd;
+int sockfd[5];
 int itr_done;
 unordered_set <int> remaining_packet_hash;
 pthread_mutex_t hash_mutex;
@@ -37,7 +45,7 @@ char * mainBuf;
 int SetupUDPSocket(const char *port)
 {
     struct addrinfo hints;
-    struct addrinfo *res;
+    //struct addrinfo *res;
     struct timeval read_timeout;
     read_timeout.tv_sec = 1;
     read_timeout.tv_usec = 0;
@@ -90,31 +98,47 @@ void *send_thread(void* serverinfo) {
 	
     int hash_size = MAX_SEQ_NUM;
     int local_itr_done;
+    char localBuf[UDP_SIZE];
     while (hash_size) {
  
-        //pthread_mutex_lock(&itr_done_mutex);
+        pthread_mutex_lock(&itr_done_mutex);
         local_itr_done = itr_done;
-        //pthread_mutex_unlock(&itr_done_mutex);
+        itr_done = 0;
+        pthread_mutex_unlock(&itr_done_mutex);
 
         if (local_itr_done) {
             string ack_string = "";
             pthread_mutex_lock(&hash_mutex);
+            int * seq_no_arr = int[remaining_packet_hash.size()];
+            int i = 0;
+            int remaing_acks_to_send = remaining_packet_hash.size();
             for (const auto& elem: remaining_packet_hash) {
-                ack_string += to_string(elem) + " ";
+                seq_no_arr[i] = elem;
+                i++; 
             }  
-	    pthread_mutex_unlock(&hash_mutex);
+	    int acks_sent = 0;
+            while(remaining_acks_to_send) {
+                int packet_ack_num = min(UDP_ACK_SIZE, remaining_acks_to_send);
+                memcpy(&localBuf[1], &seq_no_arr[acks_sent],  sizeof(int) * packet_ack_num);
+                acks_sent += packet_ack_num;
+                remaining_acks_to_send -= packet_ack_num;
 
-            printf("Ack packet string %s\n", ack_string.c_str());
-            for (int i = 0; i < 5; i++) {
+                localBuf[0] = remaining_ack_to_send == 0 ? 1 : 0;
+                printf("Sending %d Acks\n", packet_ack_num);
+                for (int i = 0; i < 5; i++) {
 
-                sendto(sockfd, ack_string.c_str(), ack_string.length(), 0, servinfo->ai_addr, servinfo->ai_addrlen);
+                    sendto(sockfd, &localBuf, sizeof(int)*packet_ack_num, 0, servinfo->ai_addr, servinfo->ai_addrlen);
 
-                printf("Sent Ack %d\n", i);
-            }
+                    printf("Sent Ack %d\n", i);
+                }
+            } 
+
+               
             printf("Done sending ack packets\n");
-            break;
-        }
         
+        
+	    pthread_mutex_unlock(&hash_mutex);
+        }
         // Update hash size
         pthread_mutex_lock(&hash_mutex);
         hash_size = remaining_packet_hash.size();
@@ -125,12 +149,13 @@ void *send_thread(void* serverinfo) {
 
 }
 
-void *recv_thread(void* clientinfo) {
+void *recv_thread(void* sockfd) {
     
     printf("recv thread started\n");
     int queue_empty = 1;
     int numbytes;
-    struct sockaddr_in cli_info = *(struct sockaddr_in *) clientinfo;
+    int thread_sockfd = (int) sockfd;
+    struct sockaddr_in cli_info;
     socklen_t addr_len = sizeof(cli_info);
 
     char localBuf[UDP_SIZE]; 
@@ -138,9 +163,7 @@ void *recv_thread(void* clientinfo) {
 
     while(hash_size) {
         
-        //pthread_mutex_lock(&hash_mutex);
-        numbytes = recvfrom(sockfd, (char *)localBuf, UDP_SIZE, 0, (struct sockaddr *) &cli_info, &addr_len);
-        //pthread_mutex_unlock(&hash_mutex);
+        numbytes = recvfrom(thread_sockfd, (char *)localBuf, UDP_SIZE, 0, (struct sockaddr *) &cli_info, &addr_len);
 
         if (numbytes < 0) {
             
@@ -158,8 +181,7 @@ void *recv_thread(void* clientinfo) {
 
         //iint seq_num = (localBuf[0] << 8) | localBuf[1] & 0xFF;
         //int packet_itr_done = (localBuf[2]) & 0x02;
-        //int packet_full_done = (localBuf[2]) & 0x01;
-        int packet_itr_done = 0;
+        int packet_full_done = (localBuf[4]) & 0x01;
 
         printf("Received seq num: %d\n", seq_num);
         if (packet_itr_done) {
@@ -189,10 +211,16 @@ void *recv_thread(void* clientinfo) {
 int main()
 {
 
-    sockfd = SetupUDPSocket(SERVER_PORT);
-    struct sockaddr_in cliaddr;
-    socklen_t addr_len = sizeof(cliaddr);
-    int numbytes;
+    //struct addrinfo*5];
+    // Set up receiving sockets
+
+    sockfd[0] = SetupUDPSocket(RECV_T1_PORT);
+    sockfd[1] = SetupUDPSocket(RECV_T2_PORT);
+    sockfd[2] = SetupUDPSocket(RECV_T3_PORT);
+    sockfd[3] = SetupUDPSocket(RECV_T4_PORT);
+    sockfd[4] = SetupUDPSocket(RECV_T5_PORT);
+
+    // Set up sending socket   
 
     struct addrinfo hints;
     struct addrinfo *servinfo;
@@ -207,7 +235,7 @@ int main()
     // error checking for getaddrinfo
     // getaddrinfo used to get server address
 
-    if ((status = getaddrinfo(localhost, SERVER_PORT, &hints, &servinfo)) != 0)
+    if ((status = getaddrinfo("10.0.1.115", SEND_PORT, &hints, &servinfo)) != 0)
     {
         fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
         exit(1);
@@ -215,21 +243,25 @@ int main()
 
 
 
+ 
     for (int i = 0; i < MAX_SEQ_NUM; i++ ) {
         remaining_packet_hash.insert(i);
     }
 
     mainBuf = new char[MAIN_BUF_SIZE];
     pthread_t tid[11];
-    for (int i = 0; i < 2; i++) {
-        pthread_create(&tid[i], NULL, recv_thread, (void*) &cliaddr);
+    for (int i = 0; i < NUM_THREADS; i++) {
+        pthread_create(&tid[i], NULL, recv_thread, (void*) sockfd[i]);
     }
-//    pthread_create(&tid[3], NULL, send_thread, (void*) servinfo);
+    pthread_create(&tid[NUM_THREADS], NULL, send_thread, (void*) servinfo);
     
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < NUM_THREADS+1; i++) {
         pthread_join(tid[i], NULL);
     }
     close(sockfd);
 
+    auto myfile = std::fstream("file.out", std::ios::out | std::ios::binary);
+    myfile.write((char*)&mainBuf[0], MAIN_BUF_SIZE);
+    myfile.close();
     return 0;
 }
