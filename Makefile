@@ -1,5 +1,5 @@
 # the compiler: gcc for C program, define as g++ for C++
-CC = g++
+CC = g++-7
 
 all: server.out client.out
 

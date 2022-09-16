@@ -22,8 +22,8 @@
 #define localhost "127.0.0.1"
 #define MAXLINE 1024
 #define FILE_SIZE 16*1024*1024
-#define UDP_SIZE 65507
-#define UDP_DATA_SIZE UDP_SIZE - 2
+#define UDP_SIZE 1500
+#define UDP_DATA_SIZE UDP_SIZE - 4
 
 using namespace std;
 
@@ -48,7 +48,7 @@ int SetupUDPSocket(const char *port)
 
     // error checking for getaddrinfo
 
-    if ((status = getaddrinfo(localhost, port, &hints, &res)) != 0)
+    if ((status = getaddrinfo("10.0.2.240", port, &hints, &res)) != 0)
     {
         fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
         exit(1);
@@ -102,7 +102,7 @@ void *ClientSendTo(void *serverinfo)
     int sequence_num;
     while ((sequence_num = ReadQueue()) != -1)
     {
-        memcpy(&small_buf[2], &main_buf[sequence_num * UDP_DATA_SIZE], UDP_DATA_SIZE);
+        memcpy(&small_buf[4], &main_buf[sequence_num * UDP_DATA_SIZE], UDP_DATA_SIZE);
         small_buf[0] = (sequence_num >> 8) & 0xFF;
         small_buf[1] = sequence_num & 0xFF;
         if ((numbytes = sendto(sock_fd, small_buf, UDP_SIZE, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
@@ -110,6 +110,7 @@ void *ClientSendTo(void *serverinfo)
             perror("Central: ServerP sendto num nodes");
             exit(1);
         }
+        printf("sent %d\n", sequence_num);
     }
 
     // int numbytes;
@@ -148,7 +149,7 @@ int main()
     // error checking for getaddrinfo
     // getaddrinfo used to get server address
 
-    if ((status = getaddrinfo(localhost, SERVER_PORT, &hints, &servinfo)) != 0)
+    if ((status = getaddrinfo("10.0.1.170", SERVER_PORT, &hints, &servinfo)) != 0)
     {
         fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
         exit(1);
@@ -169,11 +170,11 @@ int main()
     }
 
     pthread_t tid[5];
-    for (int i = 0; i < 5; i++)
+    for (int i = 0; i < 1; i++)
     {
         pthread_create(&tid[i], NULL, ClientSendTo, (void *)servinfo);
     }
-    for (int i = 0; i < 5; i++)
+    for (int i = 0; i < 1; i++)
     {
         pthread_join(tid[i], NULL);
     }
