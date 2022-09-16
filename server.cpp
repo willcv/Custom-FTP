@@ -16,8 +16,9 @@
 #define CLIENT_PORT "25581"
 #define SERVER_PORT "25580"
 #define MAIN_BUF_SIZE 65536*16384
-#define UDP_SIZE 1500
-#define UDP_DATA_SIZE (UDP_SIZE - 4)
+#define UDP_SIZE 1472
+#define HEADER_SIZE 5
+#define UDP_DATA_SIZE (UDP_SIZE - HEADER_SIZE)
 #define MAX_SEQ_NUM (MAIN_BUF_SIZE - (MAIN_BUF_SIZE % UDP_DATA_SIZE))/UDP_DATA_SIZE
 #define localhost "127.0.0.1"
 
@@ -50,7 +51,7 @@ int SetupUDPSocket(const char *port)
 
     // error checking for getaddrinfo
 
-    if ((status = getaddrinfo("10.0.1.170", port, &hints, &res)) != 0)
+    if ((status = getaddrinfo("10.0.2.66", port, &hints, &res)) != 0)
     {
         fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
         exit(1);
@@ -91,9 +92,9 @@ void *send_thread(void* serverinfo) {
     int local_itr_done;
     while (hash_size) {
  
-        pthread_mutex_lock(&itr_done_mutex);
+        //pthread_mutex_lock(&itr_done_mutex);
         local_itr_done = itr_done;
-        pthread_mutex_unlock(&itr_done_mutex);
+        //pthread_mutex_unlock(&itr_done_mutex);
 
         if (local_itr_done) {
             string ack_string = "";
@@ -137,8 +138,9 @@ void *recv_thread(void* clientinfo) {
 
     while(hash_size) {
         
-
+        //pthread_mutex_lock(&hash_mutex);
         numbytes = recvfrom(sockfd, (char *)localBuf, UDP_SIZE, 0, (struct sockaddr *) &cli_info, &addr_len);
+        //pthread_mutex_unlock(&hash_mutex);
 
         if (numbytes < 0) {
             
@@ -150,14 +152,16 @@ void *recv_thread(void* clientinfo) {
             printf("Packets recvd %d\n", (MAX_SEQ_NUM - hash_size));
             continue;
         }
+   
+        int seq_num;
+        memcpy(&seq_num, &localBuf, sizeof(seq_num));
 
-
-        int seq_num = (localBuf[0] << 8) | localBuf[1] & 0xFF;
-        int packet_itr_done = (localBuf[2]) & 0x02;
-        int packet_full_done = (localBuf[2]) & 0x01;
+        //iint seq_num = (localBuf[0] << 8) | localBuf[1] & 0xFF;
+        //int packet_itr_done = (localBuf[2]) & 0x02;
+        //int packet_full_done = (localBuf[2]) & 0x01;
+        int packet_itr_done = 0;
 
         printf("Received seq num: %d\n", seq_num);
-
         if (packet_itr_done) {
             // Done packet received. Set itr_done flag.
             pthread_mutex_lock(&itr_done_mutex);
@@ -176,7 +180,6 @@ void *recv_thread(void* clientinfo) {
             hash_size = remaining_packet_hash.size();
             pthread_mutex_unlock(&hash_mutex);
         }
-
     }
 
     
@@ -217,13 +220,13 @@ int main()
     }
 
     mainBuf = new char[MAIN_BUF_SIZE];
-    pthread_t tid[6];
-    for (int i = 0; i < 5; i++) {
+    pthread_t tid[11];
+    for (int i = 0; i < 2; i++) {
         pthread_create(&tid[i], NULL, recv_thread, (void*) &cliaddr);
     }
-    pthread_create(&tid[5], NULL, send_thread, (void*) servinfo);
+//    pthread_create(&tid[3], NULL, send_thread, (void*) servinfo);
     
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 4; i++) {
         pthread_join(tid[i], NULL);
     }
     close(sockfd);
