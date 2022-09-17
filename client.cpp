@@ -118,6 +118,7 @@ void *ClientSendTo(void *arg)
     struct addrinfo *servinfo;
     GetUDPServerInfo(SERVER_IP, SERVER_THREAD_PORTS[thread_idx], servinfo);
     int sequence_num;
+    int file_last_index = (FILE_SIZE - 1) / UDP_DATA_SIZE;
     while ((sequence_num = ReadQueue()) != -1)
     {
         memcpy(&small_buf[5], &main_buf[sequence_num * UDP_DATA_SIZE], UDP_DATA_SIZE);
@@ -127,6 +128,15 @@ void *ClientSendTo(void *arg)
         {
             perror("Central: ServerP sendto num nodes");
             exit(1);
+        }
+        if (sequence_num == file_last_index)
+        {
+            int send_size = FILE_SIZE - file_last_index * UDP_DATA_SIZE;
+            if ((numbytes = sendto(sock_fd, small_buf, send_size, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
+            {
+                perror("Central: ServerP sendto num nodes");
+                exit(1);
+            }
         }
         // Remove delay if not needed
         usleep(1000);
