@@ -221,10 +221,14 @@ int main(int argc, char *argv[])
         {
             pthread_join(tid[i], NULL);
         }
-        if ((numbytes = sendto(sock_fd, done_buf, 5, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
+        // Send Iteration done packet 5 times
+        for (int i = 0; i < 5; i++)
         {
-            perror("Central: ServerP sendto num nodes");
-            exit(1);
+            if ((numbytes = sendto(sock_fd, done_buf, 5, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
+            {
+                perror("Central: ServerP sendto num nodes");
+                exit(1);
+            }
         }
         transfer_complete = ReceiveAckFromServer(sock_fd);
         cout << "Done with iteration"
@@ -235,6 +239,7 @@ int main(int argc, char *argv[])
     auto stop = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
     cout << duration.count() << "\n";
+    cout << "File Transfer Complete\n";
 
     close(sock_fd);
     return 0;
