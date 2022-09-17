@@ -183,6 +183,7 @@ bool ReceiveAckFromServer(int sock_fd)
     {
         send_queue.push(*it);
     }
+    return false;
 }
 
 // Driver code
