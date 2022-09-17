@@ -2,7 +2,7 @@
 #define COMMON
 
 #define FILE_SIZE 16*1024*1024
-#define UDP_SIZE 32768
+#define UDP_SIZE 1472
 #define UDP_DATA_SIZE UDP_SIZE - 5
 
 #define SERVER_IP                                "10.0.2.66"

@@ -128,6 +128,8 @@ void *ClientSendTo(void *arg)
             perror("Central: ServerP sendto num nodes");
             exit(1);
         }
+        // Remove delay if not needed
+        usleep(1000);
         printf("sent %d\n", sequence_num);
     }
     cout << "Thread " << thread_idx << "exiting"
