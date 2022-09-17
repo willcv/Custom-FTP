@@ -136,6 +136,43 @@ void *ClientSendTo(void *arg)
     pthread_exit(0);
 }
 
+bool ReceiveAckFromServer(int sock_fd)
+{
+    struct sockaddr_in cliaddr;
+    socklen_t addr_len = sizeof(cliaddr);
+    bool ack_received = false;
+    int numbytes;
+    char ack_buffer[UDP_SIZE];
+    unordered_set<int> hashset;
+    while (!ack_received)
+    {
+
+        if ((numbytes = recvfrom(sock_fd, ack_buffer, UDP_SIZE, 0, (struct sockaddr *)&cliaddr, &addr_len)) == -1)
+        {
+            perror("ServerP: Central recvfrom scores list");
+            exit(1);
+        }
+        if (numbytes == 1 && ack_buffer[0] == 1)
+        {
+            return true;
+        }
+        int temp;
+        for (int i = 1; i < numbytes; i += 4)
+        {
+            memcpy(&temp, &ack_buffer[i], sizeof(temp));
+            hashset.insert(temp);
+        }
+        if (ack_buffer[0])
+        {
+            ack_received = true;
+        }
+    }
+    for (auto it = hashset.begin(); it != hashset.end(); ++it)
+    {
+        send_queue.push(*it);
+    }
+}
+
 // Driver code
 int main(int argc, char *argv[])
 {
@@ -173,7 +210,7 @@ int main(int argc, char *argv[])
     pthread_t tid[5];
     unordered_set<int> drop_sequence_num;
     int numbytes;
-    char done_buf[] = {'0','0','0','0','1'};
+    char done_buf[] = {'0', '0', '0', '0', '1'};
     do
     {
         for (int i = 0; i < 5; i++)
@@ -189,8 +226,9 @@ int main(int argc, char *argv[])
             perror("Central: ServerP sendto num nodes");
             exit(1);
         }
-        cout<< "Done with iteration" <<"\n";
-        transfer_complete = true;
+        transfer_complete = ReceiveAckFromServer(sock_fd);
+        cout << "Done with iteration"
+             << "\n";
 
     } while (!transfer_complete);
     // Stop measuring time and calculate the elapsed time
