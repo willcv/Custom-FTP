@@ -25,6 +25,14 @@ using namespace std;
 ThreadsafeQueue<int> send_queue;
 char *main_buf;
 
+pthread_mutex_t ack_done_mutex;
+pthread_mutex_t thread_done_mutex;
+pthread_mutex_t final_ack_recvd_mutex;
+
+int send_thread_done = 0;
+int ack_done = 1;
+int final_ack_recvd = 0;
+
 // UDP Socket setup code from Beej’s Guide to Network Programming
 int SetupUDPSocket(const char *ip, const char *port)
 {
@@ -120,67 +128,157 @@ void *ClientSendTo(void *arg)
     int sequence_num;
     int file_last_index = (FILE_SIZE - 1) / UDP_DATA_SIZE;
     printf("Entering\n");
-    while ((sequence_num = ReadQueue()) != -1)
-    {
-        printf("Here2 %d\n", sequence_num);
-        memcpy(&small_buf[5], &main_buf[sequence_num * UDP_DATA_SIZE], UDP_DATA_SIZE);
-        printf("Here3\n");
-        memcpy(&small_buf, &sequence_num, sizeof(sequence_num));
-        printf("Here4\n");
-        small_buf[4] = 0;
-        if ((numbytes = sendto(sock_fd, small_buf, UDP_SIZE, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
-        {
-            perror("Sending Normal Seq num packets");
-            exit(1);
+
+    int local_final_ack_recvd = 0;
+
+    while (!local_final_ack_recvd) {
+
+        int local_ack_done;
+        pthread_mutex_lock(&ack_done_mutex);
+        local_ack_done = ack_done;
+        pthread_mutex_unlock(&ack_done_mutex);
+        if (!local_ack_done){
+            continue;
         }
-        // Remove delay if not needed
-        usleep(500);
-        printf("sent %d\n", sequence_num);
+        if (send_queue.size() != 0) {
+            printf("Ack is done\n");
+            printf("Queue size %lu\n",send_queue.size());
+        } 
+        while ((sequence_num = ReadQueue()) != -1)
+        {
+            memcpy(&small_buf[5], &main_buf[sequence_num * UDP_DATA_SIZE], UDP_DATA_SIZE);
+            memcpy(&small_buf, &sequence_num, sizeof(sequence_num));
+            small_buf[4] = 0;
+            if ((numbytes = sendto(sock_fd, small_buf, UDP_SIZE, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
+            {
+                perror("Sending Normal Seq num packets");
+                exit(1);
+            }
+            // Remove delay if not needed
+            usleep(300);
+            //printf("sent %d\n", sequence_num);
+        }
+
+        // Each bit of send_thread_done holds an indicator for the thread being done.
+        // All threads are done sending when all have written a 1 to their respective bit index
+        //printf("Thread %d done\n", thread_idx);
+        pthread_mutex_lock(&thread_done_mutex);
+        send_thread_done |= 0x01 << thread_idx;
+        pthread_mutex_unlock(&thread_done_mutex);
+    
+        pthread_mutex_lock(&final_ack_recvd_mutex);
+        local_final_ack_recvd = final_ack_recvd;
+        pthread_mutex_unlock(&final_ack_recvd_mutex);
     }
-    cout << "Thread " << thread_idx << "exiting"
-         << "\n";
+    printf("Exiting Thread %d\n", thread_idx); 
     close(sock_fd);
-    pthread_exit(0);
 }
 
-bool ReceiveAckFromServer(int sock_fd)
+void * ReceiveAckFromServer(void *arg)
 {
+
+    int send_sockfd = (intptr_t)arg;
     struct sockaddr_in cliaddr;
     socklen_t addr_len = sizeof(cliaddr);
     bool ack_received = false;
     int numbytes;
     char ack_buffer[UDP_SIZE];
-    unordered_set<int> hashset;
-    while (!ack_received)
-    {
+    
+    // Value of int when all threads have written flags
+    int THREAD_DONE_VAL = 0;
+    for (int i = 0; i < NUM_THREADS; i++) {
+        THREAD_DONE_VAL |= (0x01 << i);
+    }
+    
+    // Setup server address info
+    struct addrinfo *servinfo;
+    GetUDPServerInfo(SERVER_IP, SERVER_MAIN_PORT, servinfo);
+    int local_final_ack_recvd = 0;
+    while (!local_final_ack_recvd) {
+        
+        unordered_set<int> hashset;
+        int local_thread_done;
+        pthread_mutex_lock(&thread_done_mutex);
+        local_thread_done = send_thread_done;
+        pthread_mutex_unlock(&thread_done_mutex);
 
-        if ((numbytes = recvfrom(sock_fd, ack_buffer, UDP_SIZE, 0, (struct sockaddr *)&cliaddr, &addr_len)) == -1)
+        if (local_thread_done != THREAD_DONE_VAL) {
+            continue;
+        }
+
+        ack_received = 0;
+        pthread_mutex_lock(&ack_done_mutex);
+        ack_done = 0;
+        pthread_mutex_unlock(&ack_done_mutex);
+ 
+        // Threads are done sending iteration
+        // Send itr_done packets
+
+        // Send Iteration done packet 5 times
+        char done_buf[] = {'0', '0', '0', '0', '1'};
+        for (int i = 0; i < 5; i++)
         {
-            perror("Receive from Server");
-            exit(1);
+            if ((numbytes = sendto(send_sockfd, done_buf, 5, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
+            {
+                perror("Send Ack packets to server");
+                exit(1);
+            }
         }
-        printf("Received Ack\n");
-        if (numbytes == 1 && ack_buffer[0] == 1)
+
+        while (!ack_received)
         {
-            printf("Final Ack\n");
-            return true;
+
+            if ((numbytes = recvfrom(send_sockfd, ack_buffer, UDP_SIZE, 0, (struct sockaddr *)&cliaddr, &addr_len)) == -1)
+            {
+                perror("Receive from Server");
+                exit(1);
+            }
+            printf("Received Ack\n");
+            if (numbytes == 1 && ack_buffer[0] == 1)
+            {
+                printf("Final Ack\n");
+                // Set final ack global flag, then ack done global flag
+                pthread_mutex_lock(&final_ack_recvd_mutex);
+                final_ack_recvd = 1;
+                pthread_mutex_unlock(&final_ack_recvd_mutex);
+                local_final_ack_recvd = 1;
+                //pthread_mutex_lock(&ack_done_mutex);
+                ack_done = 1;
+                //pthread_mutex_unlock(&ack_done_mutex);
+                ack_received = 1;
+                
+                pthread_mutex_lock(&thread_done_mutex);
+                send_thread_done = 0;
+                pthread_mutex_unlock(&thread_done_mutex);
+                printf("Received final Ack\n");
+                break;
+            }
+            int temp;
+            for (int i = 1; i < numbytes; i += 4)
+            { 
+                memcpy(&temp, &ack_buffer[i], sizeof(int));
+                hashset.insert(temp);
+            }
+            if (ack_buffer[0])
+            {
+                ack_received = true;
+                pthread_mutex_lock(&thread_done_mutex);
+                send_thread_done = 0;
+                pthread_mutex_unlock(&thread_done_mutex);
+                printf("Received last Ack\n");
+            }
         }
-        int temp;
-        for (int i = 1; i < numbytes; i += 4)
-        { 
-            memcpy(&temp, &ack_buffer[i], sizeof(int));
-            hashset.insert(temp);
-        }
-        if (ack_buffer[0])
+        for (auto it = hashset.begin(); it != hashset.end(); ++it)
         {
-            ack_received = true;
+            send_queue.push(*it);
         }
-    }
-    for (auto it = hashset.begin(); it != hashset.end(); ++it)
-    {
-        send_queue.push(*it);
-    }
-    return false;
+        // Set ack done global flag
+        pthread_mutex_lock(&ack_done_mutex);
+        ack_done = 1;
+        pthread_mutex_unlock(&ack_done_mutex);
+        printf("End of recv loop \n");
+    }   
+    printf("Recv exiting\n");
 }
 
 // Driver code
@@ -195,9 +293,6 @@ int main(int argc, char *argv[])
 
     int sock_fd = SetupUDPSocket(CLIENT_IP, CLIENT_MAIN_PORT);
 
-    // Setup server address info
-    struct addrinfo *servinfo;
-    GetUDPServerInfo(SERVER_IP, SERVER_MAIN_PORT, servinfo);
 
     // Read file and initialize main buffer
     ifstream input_file(argv[1]);
@@ -219,36 +314,23 @@ int main(int argc, char *argv[])
     bool transfer_complete = false;
     unordered_set<int> drop_sequence_num;
     int numbytes;
-    char done_buf[] = {'0', '0', '0', '0', '1'};
-    pthread_t tid[5];
+    pthread_t tid[7];
     std::chrono::high_resolution_clock::time_point last_sent_packet_time;
-    do
+    for (int i = 0; i < NUM_THREADS; i++)
     {
-        for (int i = 0; i < NUM_THREADS; i++)
-        {
-            pthread_create(&tid[i], NULL, ClientSendTo, (void *)(intptr_t)i);
-        }
-        for (int i = 0; i < NUM_THREADS; i++)
-        {
-            pthread_join(tid[i], NULL);
-        }
-        last_sent_packet_time = std::chrono::high_resolution_clock::now();
-        // Send Iteration done packet 5 times
-        for (int i = 0; i < 5; i++)
-        {
-            if ((numbytes = sendto(sock_fd, done_buf, 5, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
-            {
-                perror("Send Ack packets to server");
-                exit(1);
-            }
-        }
-        transfer_complete = ReceiveAckFromServer(sock_fd);
-        cout << "Done with iteration"
-             << "\n";
-
-    } while (!transfer_complete);
+        pthread_create(&tid[i], NULL, ClientSendTo, (void *)(intptr_t)i);
+    }
+    pthread_create(&tid[NUM_THREADS], NULL, ReceiveAckFromServer, (void *)(intptr_t)sock_fd);
+    for (int i = 0; i < NUM_THREADS+1; i++)
+    {
+        pthread_join(tid[i], NULL);
+    }
+   
+    cout << "Done with Transfer"
+         << "\n";
+    auto stop = std::chrono::high_resolution_clock::now();
     // Stop measuring time and calculate the elapsed time
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(last_sent_packet_time - start);
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
     cout << duration.count() << "\n";
     cout << "File Transfer Complete\n";
 
