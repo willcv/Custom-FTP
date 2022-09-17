@@ -15,7 +15,7 @@
 #include <iostream>
 #include <optional>
 #include <fstream>
-#include <time.h>
+#include <chrono>
 #include "safequeue.h"
 #include "common.h"
 
@@ -140,6 +140,7 @@ int main(int argc, char *argv[])
     {
         printf("Invalid command\n");
         printf("Usage: ./client [user@]SRC_HOST:]file1 [user@]DEST_HOST:]file2\n");
+        exit(1);
     }
 
     int sock_fd = SetupUDPSocket(CLIENT_IP, CLIENT_MAIN_PORT);
@@ -159,23 +160,22 @@ int main(int argc, char *argv[])
     }
 
     // Begin measuring time
-    time_t begin, end;
-    time(&begin);
+    auto start = std::chrono::high_resolution_clock::now();
 
     pthread_t tid[5];
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < 5; i++)
     {
         pthread_create(&tid[i], NULL, ClientSendTo, (void *)(intptr_t)i);
     }
-    for (int i = 0; i < 1; i++)
+    for (int i = 0; i < 5; i++)
     {
         pthread_join(tid[i], NULL);
     }
 
     // Stop measuring time and calculate the elapsed time
-    time(&end);
-    time_t elapsed = end - begin;
-    printf("Time measured: %ld seconds.\n", elapsed);
+    auto stop = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop-start);
+    cout << duration.count() <<"\n";
 
     close(sock_fd);
     return 0;
