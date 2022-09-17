@@ -1,7 +1,7 @@
 #ifndef COMMON
 #define COMMON
 
-#define NUM_THREADS 3
+#define NUM_THREADS 4
 #define FILE_SIZE 16*1024*1024
 #define UDP_SIZE 1472
 #define UDP_DATA_SIZE UDP_SIZE - 5

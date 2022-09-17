@@ -28,10 +28,14 @@ char *main_buf;
 pthread_mutex_t ack_done_mutex;
 pthread_mutex_t thread_done_mutex;
 pthread_mutex_t final_ack_recvd_mutex;
+pthread_mutex_t measure_time_mutex;
 
 int send_thread_done = 0;
 int ack_done = 1;
 int final_ack_recvd = 0;
+int start_set = 0;
+std::chrono::high_resolution_clock::time_point stop;
+std::chrono::high_resolution_clock::time_point start;
 
 // UDP Socket setup code from Beej’s Guide to Network Programming
 int SetupUDPSocket(const char *ip, const char *port)
@@ -131,6 +135,12 @@ void *ClientSendTo(void *arg)
 
     int local_final_ack_recvd = 0;
 
+    pthread_mutex_lock(&measure_time_mutex);
+    if (!start_set) {
+        start = std::chrono::high_resolution_clock::now();
+        start_set = 1;
+    }
+    pthread_mutex_unlock(&measure_time_mutex);
     while (!local_final_ack_recvd) {
 
         int local_ack_done;
@@ -140,22 +150,45 @@ void *ClientSendTo(void *arg)
         if (!local_ack_done){
             continue;
         }
-        if (send_queue.size() != 0) {
+        int queue_size;
+        queue_size = send_queue.size();
+        if (queue_size != 0) {
             printf("Ack is done\n");
-            printf("Queue size %lu\n",send_queue.size());
+            printf("Queue size %d\n", queue_size);
         } 
         while ((sequence_num = ReadQueue()) != -1)
         {
             memcpy(&small_buf[5], &main_buf[sequence_num * UDP_DATA_SIZE], UDP_DATA_SIZE);
             memcpy(&small_buf, &sequence_num, sizeof(sequence_num));
             small_buf[4] = 0;
-            if ((numbytes = sendto(sock_fd, small_buf, UDP_SIZE, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
-            {
-                perror("Sending Normal Seq num packets");
-                exit(1);
+            int num_duplicate_sends;
+            if (queue_size > 1000) {
+                num_duplicate_sends = 1;
+            } else if (queue_size > 500) {
+                num_duplicate_sends = 2;
+            } else if (queue_size > 250) {
+                num_duplicate_sends = 3;
             }
-            // Remove delay if not needed
-            usleep(300);
+            else {
+                num_duplicate_sends = 4;
+            }
+            for (int i = 0; i < num_duplicate_sends; i++) {
+
+                if (queue_size < 30) {
+                    printf("Seq no sent: %d\n", sequence_num);
+                }
+                if ((numbytes = sendto(sock_fd, small_buf, UDP_SIZE, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
+                {
+                    perror("Sending Normal Seq num packets");
+                    exit(1);
+                }
+                // Measure the time here so we stop measuring as soon as the last bit is sent
+                pthread_mutex_lock(&measure_time_mutex);
+                stop = std::chrono::high_resolution_clock::now();
+                pthread_mutex_unlock(&measure_time_mutex);
+                // Remove delay if not needed
+                usleep(400);
+            }
             //printf("sent %d\n", sequence_num);
         }
 
@@ -169,6 +202,7 @@ void *ClientSendTo(void *arg)
         pthread_mutex_lock(&final_ack_recvd_mutex);
         local_final_ack_recvd = final_ack_recvd;
         pthread_mutex_unlock(&final_ack_recvd_mutex);
+
     }
     printf("Exiting Thread %d\n", thread_idx); 
     close(sock_fd);
@@ -194,6 +228,7 @@ void * ReceiveAckFromServer(void *arg)
     struct addrinfo *servinfo;
     GetUDPServerInfo(SERVER_IP, SERVER_MAIN_PORT, servinfo);
     int local_final_ack_recvd = 0;
+    int itr_num = 0;
     while (!local_final_ack_recvd) {
         
         unordered_set<int> hashset;
@@ -234,7 +269,14 @@ void * ReceiveAckFromServer(void *arg)
                 exit(1);
             }
             printf("Received Ack\n");
-            if (numbytes == 1 && ack_buffer[0] == 1)
+            int read_itr_num = 0;
+            memcpy(&read_itr_num, &ack_buffer[1], 3);
+            printf("Iteration info recv: %d, curr %d\n", read_itr_num, itr_num);
+            if (read_itr_num != itr_num) {
+                printf("Packet received from wrong iteration\n");
+                continue;
+            }
+            if (numbytes == 4 && ack_buffer[0] == 1)
             {
                 printf("Final Ack\n");
                 // Set final ack global flag, then ack done global flag
@@ -254,7 +296,7 @@ void * ReceiveAckFromServer(void *arg)
                 break;
             }
             int temp;
-            for (int i = 1; i < numbytes; i += 4)
+            for (int i = 4; i < numbytes; i += 4)
             { 
                 memcpy(&temp, &ack_buffer[i], sizeof(int));
                 hashset.insert(temp);
@@ -277,6 +319,7 @@ void * ReceiveAckFromServer(void *arg)
         ack_done = 1;
         pthread_mutex_unlock(&ack_done_mutex);
         printf("End of recv loop \n");
+        itr_num ++;
     }   
     printf("Recv exiting\n");
 }
@@ -328,7 +371,6 @@ int main(int argc, char *argv[])
    
     cout << "Done with Transfer"
          << "\n";
-    auto stop = std::chrono::high_resolution_clock::now();
     // Stop measuring time and calculate the elapsed time
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
     cout << duration.count() << "\n";
