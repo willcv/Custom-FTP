@@ -2,9 +2,9 @@
 #define COMMON
 
 #define NUM_THREADS 4
-#define FILE_SIZE 16*1024*1024
+#define FILE_SIZE 375552 //16*1024*1024//65536*16384
 #define UDP_SIZE 1472
-#define UDP_DATA_SIZE UDP_SIZE - 5
+#define UDP_DATA_SIZE (UDP_SIZE - 5)
 
 #define SERVER_IP                                "10.0.2.66"
 #define SERVER_MAIN_PORT                         "25581"

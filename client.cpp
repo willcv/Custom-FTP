@@ -158,7 +158,9 @@ void *ClientSendTo(void *arg)
         } 
         while ((sequence_num = ReadQueue()) != -1)
         {
+            //printf("Here 1 %d\n", sequence_num);
             memcpy(&small_buf[5], &main_buf[sequence_num * UDP_DATA_SIZE], UDP_DATA_SIZE);
+            //printf("Here 2\n");
             memcpy(&small_buf, &sequence_num, sizeof(sequence_num));
             small_buf[4] = 0;
             int num_duplicate_sends;
@@ -345,7 +347,7 @@ int main(int argc, char *argv[])
 
     // Initialize queue
     int file_last_index = (FILE_SIZE - 1) / UDP_DATA_SIZE;
-
+    printf("file last index %d\n", file_last_index);
     for (int i = 0; i <= file_last_index; i++)
     {
         send_queue.push(i);
