@@ -126,7 +126,7 @@ void *ClientSendTo(void *arg)
         small_buf[4] = 0;
         if ((numbytes = sendto(sock_fd, small_buf, UDP_SIZE, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
         {
-            perror("Central: ServerP sendto num nodes");
+            perror("Sending Normal Seq num packets");
             exit(1);
         }
         if (sequence_num == file_last_index)
@@ -134,7 +134,7 @@ void *ClientSendTo(void *arg)
             int send_size = FILE_SIZE - file_last_index * UDP_DATA_SIZE;
             if ((numbytes = sendto(sock_fd, small_buf, send_size, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
             {
-                perror("Central: ServerP sendto num nodes");
+                perror("Sending Last Seq num packets");
                 exit(1);
             }
         }
@@ -161,7 +161,7 @@ bool ReceiveAckFromServer(int sock_fd)
 
         if ((numbytes = recvfrom(sock_fd, ack_buffer, UDP_SIZE, 0, (struct sockaddr *)&cliaddr, &addr_len)) == -1)
         {
-            perror("ServerP: Central recvfrom scores list");
+            perror("Receive from Server");
             exit(1);
         }
         if (numbytes == 1 && ack_buffer[0] == 1)
@@ -239,7 +239,7 @@ int main(int argc, char *argv[])
         {
             if ((numbytes = sendto(sock_fd, done_buf, 5, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
             {
-                perror("Central: ServerP sendto num nodes");
+                perror("Send Ack packets to server");
                 exit(1);
             }
         }
