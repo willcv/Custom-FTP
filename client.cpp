@@ -15,25 +15,17 @@
 #include <iostream>
 #include <optional>
 #include <fstream>
+#include <time.h>
 #include "safequeue.h"
-
-#define CLIENT_PORT "25581"
-#define SERVER_PORT "25580"
-#define localhost "127.0.0.1"
-#define MAXLINE 1024
-#define FILE_SIZE 16*1024*1024
-#define UDP_SIZE 65507
-#define UDP_DATA_SIZE UDP_SIZE - 2
+#include "common.h"
 
 using namespace std;
 
-int sock_fd = 0;
 ThreadsafeQueue<int> send_queue;
-pthread_mutex_t mt = PTHREAD_MUTEX_INITIALIZER;
-char* main_buf;
+char *main_buf;
 
 // UDP Socket setup code from Beej’s Guide to Network Programming
-int SetupUDPSocket(const char *port)
+int SetupUDPSocket(const char *ip, const char *port)
 {
     struct addrinfo hints;
     struct addrinfo *res;
@@ -48,7 +40,7 @@ int SetupUDPSocket(const char *port)
 
     // error checking for getaddrinfo
 
-    if ((status = getaddrinfo(localhost, port, &hints, &res)) != 0)
+    if ((status = getaddrinfo(ip, port, &hints, &res)) != 0)
     {
         fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
         exit(1);
@@ -79,6 +71,28 @@ int SetupUDPSocket(const char *port)
     return sockfd;
 }
 
+void GetUDPServerInfo(const char *ip, const char *port, struct addrinfo *&servinfo)
+{
+
+    struct addrinfo hints;
+    int status;
+
+    // first, load up address structs with getaddrinfo():
+
+    memset(&hints, 0, sizeof hints); // make sure hints is empty
+    hints.ai_family = AF_INET;       // use IPv4
+    hints.ai_socktype = SOCK_DGRAM;  // use datagram sockets
+
+    // error checking for getaddrinfo
+    // getaddrinfo used to get server address
+
+    if ((status = getaddrinfo(ip, port, &hints, &servinfo)) != 0)
+    {
+        fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
+        exit(1);
+    }
+}
+
 int ReadQueue()
 {
     optional<int> num = send_queue.pop();
@@ -94,17 +108,23 @@ char *FileMap(int sequence_num, char *main_buffer)
 }
 
 // Client sends to server
-void *ClientSendTo(void *serverinfo)
+void *ClientSendTo(void *arg)
 {
+    int thread_idx = (intptr_t)arg;
+    int sock_fd = SetupUDPSocket(CLIENT_IP, CLIENT_THREAD_PORTS[thread_idx]);
     char small_buf[UDP_SIZE];
     int numbytes;
-    struct addrinfo *servinfo = (struct addrinfo *)serverinfo;
+    struct addrinfo *servinfo;
+    GetUDPServerInfo(SERVER_IP, SERVER_THREAD_PORTS[thread_idx], servinfo);
     int sequence_num;
     while ((sequence_num = ReadQueue()) != -1)
     {
-        memcpy(&small_buf[2], &main_buf[sequence_num * UDP_DATA_SIZE], UDP_DATA_SIZE);
-        small_buf[0] = (sequence_num >> 8) & 0xFF;
-        small_buf[1] = sequence_num & 0xFF;
+        memcpy(&small_buf[5], &main_buf[sequence_num * UDP_DATA_SIZE], UDP_DATA_SIZE);
+        small_buf[0] = (sequence_num >> 24) & 0xFFFF;
+        small_buf[1] = (sequence_num >> 16) & 0xFFFF;
+        small_buf[2] = (sequence_num >> 8) & 0xFFFF;
+        small_buf[3] = sequence_num & 0xFFFF;
+        small_buf[5] = 0;
         if ((numbytes = sendto(sock_fd, small_buf, UDP_SIZE, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
         {
             perror("Central: ServerP sendto num nodes");
@@ -112,50 +132,22 @@ void *ClientSendTo(void *serverinfo)
         }
     }
 
-    // int numbytes;
-    // struct addrinfo *servinfo = (struct addrinfo *)serverinfo;
-    // int chunk_index;
-    // while ((chunk_index = ReadQueue()) != -1)
-    // {
-    //     string temp = to_string(chunk_index);
-    //     if ((numbytes = sendto(sock_fd, temp.data(), temp.length(), 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
-    //     {
-    //         perror("Central: ServerP sendto num nodes");
-    //         exit(1);
-    //     }
-    // }
-    // if(seq_no== 107)
-    // sendto(sock_fd, FileChunk(seq_no))
-
     printf("Hello message sent.\n");
 }
 
 // Driver code
-int main()
+int main(int argc, char *argv[])
 {
-    sock_fd = SetupUDPSocket(CLIENT_PORT);
-
-    struct addrinfo hints;
-    struct addrinfo *servinfo;
-    int status;
-
-    // first, load up address structs with getaddrinfo():
-
-    memset(&hints, 0, sizeof hints); // make sure hints is empty
-    hints.ai_family = AF_INET;       // use IPv4
-    hints.ai_socktype = SOCK_DGRAM;  // use datagram sockets
-
-    // error checking for getaddrinfo
-    // getaddrinfo used to get server address
-
-    if ((status = getaddrinfo(localhost, SERVER_PORT, &hints, &servinfo)) != 0)
+    if (argc != 3)
     {
-        fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
-        exit(1);
+        printf("Invalid command\n");
+        printf("Usage: ./client [user@]SRC_HOST:]file1 [user@]DEST_HOST:]file2\n");
     }
 
+    int sock_fd = SetupUDPSocket(CLIENT_IP, CLIENT_MAIN_PORT);
+
     // Read file and initialize main buffer
-    ifstream input_file("data.bin");
+    ifstream input_file(argv[1]);
     main_buf = new char[FILE_SIZE];
 
     input_file.read(main_buf, FILE_SIZE);
@@ -168,15 +160,24 @@ int main()
         send_queue.push(i);
     }
 
+    // Begin measuring time
+    time_t begin, end;
+    time(&begin);
+
     pthread_t tid[5];
     for (int i = 0; i < 5; i++)
     {
-        pthread_create(&tid[i], NULL, ClientSendTo, (void *)servinfo);
+        pthread_create(&tid[i], NULL, ClientSendTo, (void *)(intptr_t)i);
     }
     for (int i = 0; i < 5; i++)
     {
         pthread_join(tid[i], NULL);
     }
+
+    // Stop measuring time and calculate the elapsed time
+    time(&end);
+    time_t elapsed = end - begin;
+    printf("Time measured: %ld seconds.\n", elapsed);
 
     close(sock_fd);
     return 0;
