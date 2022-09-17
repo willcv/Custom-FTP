@@ -130,6 +130,7 @@ void *ClientSendTo(void *arg)
             perror("Central: ServerP sendto num nodes");
             exit(1);
         }
+        printf("sent %d\n", sequence_num);
     }
 
     printf("Hello message sent.\n");
@@ -157,7 +158,7 @@ int main(int argc, char *argv[])
 
     for (int i = 0; i <= file_last_index; i++)
     {
-        send_queue.push(i);
+        send_queue.push(file_last_index * j + i);
     }
 
     // Begin measuring time
@@ -165,11 +166,11 @@ int main(int argc, char *argv[])
     time(&begin);
 
     pthread_t tid[5];
-    for (int i = 0; i < 5; i++)
+    for (int i = 0; i < 3; i++)
     {
         pthread_create(&tid[i], NULL, ClientSendTo, (void *)(intptr_t)i);
     }
-    for (int i = 0; i < 5; i++)
+    for (int i = 0; i < 1; i++)
     {
         pthread_join(tid[i], NULL);
     }
