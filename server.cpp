@@ -22,7 +22,7 @@
 #define RECV_T5_PORT "25585"
 #define SEND_PORT "25580"
 
-#define MAIN_BUF_SIZE 16*1024*1024
+#define MAIN_BUF_SIZE 375552 //16*1024*1024
 #define UDP_SIZE 1472
 #define HEADER_SIZE 5
 #define UDP_DATA_SIZE (UDP_SIZE - HEADER_SIZE)
@@ -108,19 +108,27 @@ void *send_thread(void* serverinfo) {
     int itr_num = 0;
 
 
-
+    int prev_local_ack;
     while (hash_size) {
  
         pthread_mutex_lock(&ack_sent_mutex);
         local_ack_sent = ack_sent;
         pthread_mutex_unlock(&ack_sent_mutex);
+
+        if (prev_local_ack == 1 && local_ack_sent == 0) {
+            pthread_mutex_lock(&itr_done_mutex);
+            itr_done = 0;
+            pthread_mutex_unlock(&itr_done_mutex);
+        }
+        prev_local_ack = local_ack_sent;
+
         if (local_ack_sent) {
             continue;
         }
-        
+        // Ack is 0. If ack has just been unset, set itr_done to 0
+        // else, 
         pthread_mutex_lock(&itr_done_mutex);
         local_itr_done = itr_done;
-        itr_done = 0;
         pthread_mutex_unlock(&itr_done_mutex);
 
         if (local_itr_done) {
@@ -140,6 +148,8 @@ void *send_thread(void* serverinfo) {
             
 	    int acks_sent = 0;
             while(remaining_acks_to_send) {
+
+
                 int packet_ack_num = min(UDP_ACK_SIZE/4, remaining_acks_to_send);
                 printf("Here 4\n");
                 memcpy(&localBuf[4], &seq_no_arr[acks_sent],  sizeof(int) * packet_ack_num);
@@ -158,6 +168,7 @@ void *send_thread(void* serverinfo) {
                 printf("Sending %d Acks, localbuf[0] %d, itr_num %d\n", packet_ack_num, localBuf[0], itr_num);
                 for (int i = 0; i < DUPLICATE_ACKS; i++) {
 
+                    usleep(1000);
                     for (int i = 0; i < min(10, 4*packet_ack_num+4); i++)
                     {
                         printf("%02X", (unsigned char) localBuf[i]);
@@ -168,7 +179,7 @@ void *send_thread(void* serverinfo) {
                 }
             } 
 
-            usleep(10000);                 
+            usleep(1000);                 
             itr_num ++;
             printf("Done sending ack packets\n");
         
@@ -224,6 +235,7 @@ void *recv_thread(void* sockfd) {
             continue;
         }
    
+        printf("Here 1\n");
         int seq_num;
         if (numbytes > 10) {
             memcpy(&seq_num, &localBuf, sizeof(seq_num));
@@ -234,6 +246,7 @@ void *recv_thread(void* sockfd) {
         int packet_itr_done = (localBuf[4]) & 0x01;
 
 
+        printf("Here 2\n");
         int continue_flag = 0;
         pthread_mutex_lock(&ack_sent_mutex);
         if (ack_sent) {
@@ -260,16 +273,20 @@ void *recv_thread(void* sockfd) {
         }
         else {
             // Data packet received. Store data in buffer
+            printf("Here 3 %d\n", seq_num);
             pthread_mutex_lock(&mainBuf_mutex);
-            memcpy(&mainBuf[seq_num*UDP_DATA_SIZE], &localBuf[4], UDP_DATA_SIZE);
+            memcpy(&mainBuf[seq_num*UDP_DATA_SIZE], &localBuf[4], numbytes-5);
             pthread_mutex_unlock(&mainBuf_mutex);
 
             // Update hash
+            printf("Here 4\n");
             pthread_mutex_lock(&hash_mutex);
             remaining_packet_hash.erase(seq_num);
             hash_size = remaining_packet_hash.size();
             pthread_mutex_unlock(&hash_mutex);
         }
+        
+        printf("Here 5\n");
     }
 
     
