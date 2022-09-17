@@ -12,8 +12,9 @@
 #include <sys/wait.h>
 #include <string>
 #include <unordered_set>
+#include <fstream>
 
-#define THREAD_NUM 5
+#define NUM_THREADS 3
 #define RECV_T1_PORT "25581"
 #define RECV_T2_PORT "25582"
 #define RECV_T3_PORT "25583"
@@ -21,31 +22,35 @@
 #define RECV_T5_PORT "25585"
 #define SEND_PORT "25580"
 
-#define MAIN_BUF_SIZE 65536*16384
-#define UDP_SIZE 32768
+#define MAIN_BUF_SIZE 16*1024*1024
+#define UDP_SIZE 1472
 #define HEADER_SIZE 5
 #define UDP_DATA_SIZE (UDP_SIZE - HEADER_SIZE)
 #define ACK_HEADER_SIZE 1
 #define UDP_ACK_SIZE (UDP_SIZE - ACK_HEADER_SIZE)
 #define MAX_SEQ_NUM (MAIN_BUF_SIZE - (MAIN_BUF_SIZE % UDP_DATA_SIZE))/UDP_DATA_SIZE
-#define localhost "127.0.0.1"
+#define DUPLICATE_ACKS 4
+#define CLIENT_IP "10.0.1.115"
+#define SERVER_IP "10.0.2.66"
 
 using namespace std;
 
-int sockfd[5];
+int recv_sockfd[5];
+int send_sockfd;
 int itr_done;
+int ack_sent;
 unordered_set <int> remaining_packet_hash;
 pthread_mutex_t hash_mutex;
 pthread_mutex_t itr_done_mutex;
 pthread_mutex_t mainBuf_mutex;
-
+pthread_mutex_t ack_sent_mutex;
 char * mainBuf;
 
 // UDP Socket setup code from Beej’s Guide to Network Programming
-int SetupUDPSocket(const char *port)
+int SetupUDPSocket(const char *port, const char *ip)
 {
     struct addrinfo hints;
-    //struct addrinfo *res;
+    struct addrinfo *res;
     struct timeval read_timeout;
     read_timeout.tv_sec = 1;
     read_timeout.tv_usec = 0;
@@ -59,7 +64,7 @@ int SetupUDPSocket(const char *port)
 
     // error checking for getaddrinfo
 
-    if ((status = getaddrinfo("10.0.2.66", port, &hints, &res)) != 0)
+    if ((status = getaddrinfo(ip, port, &hints, &res)) != 0)
     {
         fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
         exit(1);
@@ -67,7 +72,7 @@ int SetupUDPSocket(const char *port)
 
     // make a socket:
 
-    sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    int sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
 
     // error checking for socket creation
 
@@ -99,8 +104,19 @@ void *send_thread(void* serverinfo) {
     int hash_size = MAX_SEQ_NUM;
     int local_itr_done;
     char localBuf[UDP_SIZE];
+    int local_ack_sent;
+
+
+
     while (hash_size) {
  
+        pthread_mutex_lock(&ack_sent_mutex);
+        local_ack_sent = ack_sent;
+        pthread_mutex_unlock(&ack_sent_mutex);
+        if (local_ack_sent) {
+            continue;
+        }
+        
         pthread_mutex_lock(&itr_done_mutex);
         local_itr_done = itr_done;
         itr_done = 0;
@@ -109,25 +125,41 @@ void *send_thread(void* serverinfo) {
         if (local_itr_done) {
             string ack_string = "";
             pthread_mutex_lock(&hash_mutex);
-            int * seq_no_arr = int[remaining_packet_hash.size()];
+            printf("Here 1\n");
+            int * seq_no_arr = new int[remaining_packet_hash.size()];
             int i = 0;
-            int remaing_acks_to_send = remaining_packet_hash.size();
+            int remaining_acks_to_send = remaining_packet_hash.size();
+            printf("Remaining acks_to_send: %d\n", remaining_acks_to_send);
+            printf("Here 2\n");
             for (const auto& elem: remaining_packet_hash) {
                 seq_no_arr[i] = elem;
                 i++; 
             }  
+            printf("Here 3\n");
+            
 	    int acks_sent = 0;
             while(remaining_acks_to_send) {
-                int packet_ack_num = min(UDP_ACK_SIZE, remaining_acks_to_send);
+                int packet_ack_num = min(UDP_ACK_SIZE/4, remaining_acks_to_send);
+                printf("Here 4\n");
                 memcpy(&localBuf[1], &seq_no_arr[acks_sent],  sizeof(int) * packet_ack_num);
+                for(int i = 0; i < min(5,packet_ack_num); i++) {
+                    printf("seq_no_arr: %d, %d\n", i, seq_no_arr[i]);
+                }
+                printf("Here 5\n");
                 acks_sent += packet_ack_num;
                 remaining_acks_to_send -= packet_ack_num;
+                printf("Here 1\n");
 
-                localBuf[0] = remaining_ack_to_send == 0 ? 1 : 0;
-                printf("Sending %d Acks\n", packet_ack_num);
-                for (int i = 0; i < 5; i++) {
+                localBuf[0] = remaining_acks_to_send == 0 ? 1 : 0;
+                printf("Remaining Acks: %d\n", remaining_acks_to_send);
+                printf("Sending %d Acks, localbuf[0] %d\n", packet_ack_num, localBuf[0]);
+                for (int i = 0; i < DUPLICATE_ACKS; i++) {
 
-                    sendto(sockfd, &localBuf, sizeof(int)*packet_ack_num, 0, servinfo->ai_addr, servinfo->ai_addrlen);
+                    for (int i = 0; i < 10; i++)
+                    {
+                        printf("%02X", (unsigned char) localBuf[i]);
+                    } 
+                    sendto(send_sockfd, localBuf, sizeof(int)*packet_ack_num+1, 0, servinfo->ai_addr, servinfo->ai_addrlen);
 
                     printf("Sent Ack %d\n", i);
                 }
@@ -138,6 +170,11 @@ void *send_thread(void* serverinfo) {
         
         
 	    pthread_mutex_unlock(&hash_mutex);
+
+            pthread_mutex_lock(&ack_sent_mutex);
+            ack_sent = 1;
+            printf("finished iteration\n");
+            pthread_mutex_unlock(&ack_sent_mutex);
         }
         // Update hash size
         pthread_mutex_lock(&hash_mutex);
@@ -146,7 +183,13 @@ void *send_thread(void* serverinfo) {
 
     }
     
+    // Sending Final Done Packet
+    for (int i = 0; i < DUPLICATE_ACKS; i++) {
+        char done_buf[] = {1};
+        sendto(send_sockfd, done_buf, 1, 0, servinfo->ai_addr, servinfo->ai_addrlen);
 
+        printf("Sent Final Ack %d\n", i);
+    }
 }
 
 void *recv_thread(void* sockfd) {
@@ -154,10 +197,9 @@ void *recv_thread(void* sockfd) {
     printf("recv thread started\n");
     int queue_empty = 1;
     int numbytes;
-    int thread_sockfd = (int) sockfd;
+    int thread_sockfd = *(int*) sockfd;
     struct sockaddr_in cli_info;
     socklen_t addr_len = sizeof(cli_info);
-
     char localBuf[UDP_SIZE]; 
     int hash_size = MAX_SEQ_NUM;
 
@@ -177,14 +219,34 @@ void *recv_thread(void* sockfd) {
         }
    
         int seq_num;
-        memcpy(&seq_num, &localBuf, sizeof(seq_num));
-
+        if (numbytes > 10) {
+            memcpy(&seq_num, &localBuf, sizeof(seq_num));
+            printf("Received seq num: %d\n", seq_num);
+        }
         //iint seq_num = (localBuf[0] << 8) | localBuf[1] & 0xFF;
         //int packet_itr_done = (localBuf[2]) & 0x02;
-        int packet_full_done = (localBuf[4]) & 0x01;
+        int packet_itr_done = (localBuf[4]) & 0x01;
 
-        printf("Received seq num: %d\n", seq_num);
+
+        int continue_flag = 0;
+        pthread_mutex_lock(&ack_sent_mutex);
+        if (ack_sent) {
+            if (!packet_itr_done) {
+                ack_sent = 0;
+                printf("Received data packet, unsetting ack_sent\n");
+            } else {
+                continue_flag = 1;
+            }
+        }
+        pthread_mutex_unlock(&ack_sent_mutex);
+
+        if(continue_flag){
+            
+            continue;
+        }
+
         if (packet_itr_done) {
+            printf("Itr done received\n");
             // Done packet received. Set itr_done flag.
             pthread_mutex_lock(&itr_done_mutex);
             itr_done = 1;
@@ -214,14 +276,15 @@ int main()
     //struct addrinfo*5];
     // Set up receiving sockets
 
-    sockfd[0] = SetupUDPSocket(RECV_T1_PORT);
-    sockfd[1] = SetupUDPSocket(RECV_T2_PORT);
-    sockfd[2] = SetupUDPSocket(RECV_T3_PORT);
-    sockfd[3] = SetupUDPSocket(RECV_T4_PORT);
-    sockfd[4] = SetupUDPSocket(RECV_T5_PORT);
+    recv_sockfd[0] = SetupUDPSocket(RECV_T1_PORT, SERVER_IP);
+    recv_sockfd[1] = SetupUDPSocket(RECV_T2_PORT, SERVER_IP);
+    recv_sockfd[2] = SetupUDPSocket(RECV_T3_PORT, SERVER_IP);
+    recv_sockfd[3] = SetupUDPSocket(RECV_T4_PORT, SERVER_IP);
+    recv_sockfd[4] = SetupUDPSocket(RECV_T5_PORT, SERVER_IP);
 
     // Set up sending socket   
-
+    send_sockfd = SetupUDPSocket(SEND_PORT, SERVER_IP);
+    
     struct addrinfo hints;
     struct addrinfo *servinfo;
     int status;
@@ -235,14 +298,11 @@ int main()
     // error checking for getaddrinfo
     // getaddrinfo used to get server address
 
-    if ((status = getaddrinfo("10.0.1.115", SEND_PORT, &hints, &servinfo)) != 0)
+    if ((status = getaddrinfo(CLIENT_IP, SEND_PORT, &hints, &servinfo)) != 0)
     {
         fprintf(stderr, "getaddrinfo error: %s\n", gai_strerror(status));
         exit(1);
     }
-
-
-
  
     for (int i = 0; i < MAX_SEQ_NUM; i++ ) {
         remaining_packet_hash.insert(i);
@@ -251,15 +311,18 @@ int main()
     mainBuf = new char[MAIN_BUF_SIZE];
     pthread_t tid[11];
     for (int i = 0; i < NUM_THREADS; i++) {
-        pthread_create(&tid[i], NULL, recv_thread, (void*) sockfd[i]);
+        pthread_create(&tid[i], NULL, recv_thread, (void*) &recv_sockfd[i]);
     }
     pthread_create(&tid[NUM_THREADS], NULL, send_thread, (void*) servinfo);
     
     for (int i = 0; i < NUM_THREADS+1; i++) {
         pthread_join(tid[i], NULL);
     }
-    close(sockfd);
 
+    for (int i = 0; i < 5; i++) {
+        close(recv_sockfd[i]);
+    }
+    close(send_sockfd);
     auto myfile = std::fstream("file.out", std::ios::out | std::ios::binary);
     myfile.write((char*)&mainBuf[0], MAIN_BUF_SIZE);
     myfile.close();
