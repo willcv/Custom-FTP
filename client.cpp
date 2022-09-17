@@ -120,11 +120,8 @@ void *ClientSendTo(void *arg)
     while ((sequence_num = ReadQueue()) != -1)
     {
         memcpy(&small_buf[5], &main_buf[sequence_num * UDP_DATA_SIZE], UDP_DATA_SIZE);
-        small_buf[0] = (sequence_num >> 24) & 0xFFFF;
-        small_buf[1] = (sequence_num >> 16) & 0xFFFF;
-        small_buf[2] = (sequence_num >> 8) & 0xFFFF;
-        small_buf[3] = sequence_num & 0xFFFF;
-        small_buf[5] = 0;
+        memcpy(&small_buf, &sequence_num, sizeof(sequence_num));
+        small_buf[4] = 0;
         if ((numbytes = sendto(sock_fd, small_buf, UDP_SIZE, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
         {
             perror("Central: ServerP sendto num nodes");
@@ -158,7 +155,7 @@ int main(int argc, char *argv[])
 
     for (int i = 0; i <= file_last_index; i++)
     {
-        send_queue.push(file_last_index * j + i);
+        send_queue.push(i);
     }
 
     // Begin measuring time
