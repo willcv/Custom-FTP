@@ -14,7 +14,7 @@
 #include <unordered_set>
 #include <fstream>
 
-#define NUM_THREADS 3
+#define NUM_THREADS 4
 #define RECV_T1_PORT "25581"
 #define RECV_T2_PORT "25582"
 #define RECV_T3_PORT "25583"
@@ -26,7 +26,7 @@
 #define UDP_SIZE 1472
 #define HEADER_SIZE 5
 #define UDP_DATA_SIZE (UDP_SIZE - HEADER_SIZE)
-#define ACK_HEADER_SIZE 1
+#define ACK_HEADER_SIZE 4
 #define UDP_ACK_SIZE (UDP_SIZE - ACK_HEADER_SIZE)
 #define MAX_SEQ_NUM (MAIN_BUF_SIZE - (MAIN_BUF_SIZE % UDP_DATA_SIZE))/UDP_DATA_SIZE
 #define DUPLICATE_ACKS 4
@@ -105,6 +105,7 @@ void *send_thread(void* serverinfo) {
     int local_itr_done;
     char localBuf[UDP_SIZE];
     int local_ack_sent;
+    int itr_num = 0;
 
 
 
@@ -141,7 +142,7 @@ void *send_thread(void* serverinfo) {
             while(remaining_acks_to_send) {
                 int packet_ack_num = min(UDP_ACK_SIZE/4, remaining_acks_to_send);
                 printf("Here 4\n");
-                memcpy(&localBuf[1], &seq_no_arr[acks_sent],  sizeof(int) * packet_ack_num);
+                memcpy(&localBuf[4], &seq_no_arr[acks_sent],  sizeof(int) * packet_ack_num);
                 for(int i = 0; i < min(5,packet_ack_num); i++) {
                     printf("seq_no_arr: %d, %d\n", i, seq_no_arr[i]);
                 }
@@ -151,21 +152,24 @@ void *send_thread(void* serverinfo) {
                 printf("Here 1\n");
 
                 localBuf[0] = remaining_acks_to_send == 0 ? 1 : 0;
+                // Store 3 bytes of itr_num into local buf
+                memcpy(&localBuf[1], &itr_num, 3);
                 printf("Remaining Acks: %d\n", remaining_acks_to_send);
-                printf("Sending %d Acks, localbuf[0] %d\n", packet_ack_num, localBuf[0]);
+                printf("Sending %d Acks, localbuf[0] %d, itr_num %d\n", packet_ack_num, localBuf[0], itr_num);
                 for (int i = 0; i < DUPLICATE_ACKS; i++) {
 
-                    for (int i = 0; i < 10; i++)
+                    for (int i = 0; i < min(10, 4*packet_ack_num+4); i++)
                     {
                         printf("%02X", (unsigned char) localBuf[i]);
                     } 
-                    sendto(send_sockfd, localBuf, sizeof(int)*packet_ack_num+1, 0, servinfo->ai_addr, servinfo->ai_addrlen);
+                    sendto(send_sockfd, localBuf, sizeof(int)*packet_ack_num+4, 0, servinfo->ai_addr, servinfo->ai_addrlen);
 
                     printf("Sent Ack %d\n", i);
                 }
             } 
 
-               
+            usleep(10000);                 
+            itr_num ++;
             printf("Done sending ack packets\n");
         
         
@@ -182,11 +186,14 @@ void *send_thread(void* serverinfo) {
         pthread_mutex_unlock(&hash_mutex);
 
     }
-    
+
+    printf("Final iteration num %d\n", itr_num);    
     // Sending Final Done Packet
-    for (int i = 0; i < DUPLICATE_ACKS; i++) {
-        char done_buf[] = {1};
-        sendto(send_sockfd, done_buf, 1, 0, servinfo->ai_addr, servinfo->ai_addrlen);
+    for (int i = 0; i < 20; i++) {
+        char done_buf[4];
+        done_buf[0] = 1;
+        memcpy(&done_buf[1], &itr_num, 3);
+        sendto(send_sockfd, done_buf, 4, 0, servinfo->ai_addr, servinfo->ai_addrlen);
 
         printf("Sent Final Ack %d\n", i);
     }
@@ -202,7 +209,6 @@ void *recv_thread(void* sockfd) {
     socklen_t addr_len = sizeof(cli_info);
     char localBuf[UDP_SIZE]; 
     int hash_size = MAX_SEQ_NUM;
-
     while(hash_size) {
         
         numbytes = recvfrom(thread_sockfd, (char *)localBuf, UDP_SIZE, 0, (struct sockaddr *) &cli_info, &addr_len);
