@@ -124,17 +124,20 @@ void *ClientSendTo(void *arg)
         memcpy(&small_buf[5], &main_buf[sequence_num * UDP_DATA_SIZE], UDP_DATA_SIZE);
         memcpy(&small_buf, &sequence_num, sizeof(sequence_num));
         small_buf[4] = 0;
-        if ((numbytes = sendto(sock_fd, small_buf, UDP_SIZE, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
-        {
-            perror("Sending Normal Seq num packets");
-            exit(1);
-        }
         if (sequence_num == file_last_index)
         {
             int send_size = FILE_SIZE - file_last_index * UDP_DATA_SIZE;
             if ((numbytes = sendto(sock_fd, small_buf, send_size, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
             {
                 perror("Sending Last Seq num packets");
+                exit(1);
+            }
+        }
+        else
+        {
+            if ((numbytes = sendto(sock_fd, small_buf, UDP_SIZE, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
+            {
+                perror("Sending Normal Seq num packets");
                 exit(1);
             }
         }
