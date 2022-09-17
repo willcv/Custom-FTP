@@ -16,6 +16,7 @@
 #include <optional>
 #include <fstream>
 #include <chrono>
+#include <unordered_set>
 #include "safequeue.h"
 #include "common.h"
 
@@ -129,8 +130,10 @@ void *ClientSendTo(void *arg)
         }
         printf("sent %d\n", sequence_num);
     }
-
-    printf("Hello message sent.\n");
+    cout << "Thread " << thread_idx << "exiting"
+         << "\n";
+    close(sock_fd);
+    pthread_exit(0);
 }
 
 // Driver code
@@ -144,6 +147,10 @@ int main(int argc, char *argv[])
     }
 
     int sock_fd = SetupUDPSocket(CLIENT_IP, CLIENT_MAIN_PORT);
+
+    // Setup server address info
+    struct addrinfo *servinfo;
+    GetUDPServerInfo(SERVER_IP, SERVER_MAIN_PORT, servinfo);
 
     // Read file and initialize main buffer
     ifstream input_file(argv[1]);
@@ -162,20 +169,34 @@ int main(int argc, char *argv[])
     // Begin measuring time
     auto start = std::chrono::high_resolution_clock::now();
 
+    bool transfer_complete = false;
     pthread_t tid[5];
-    for (int i = 0; i < 5; i++)
+    unordered_set<int> drop_sequence_num;
+    int numbytes;
+    char done_buf[] = {'0','0','0','0','1'};
+    do
     {
-        pthread_create(&tid[i], NULL, ClientSendTo, (void *)(intptr_t)i);
-    }
-    for (int i = 0; i < 5; i++)
-    {
-        pthread_join(tid[i], NULL);
-    }
+        for (int i = 0; i < 5; i++)
+        {
+            pthread_create(&tid[i], NULL, ClientSendTo, (void *)(intptr_t)i);
+        }
+        for (int i = 0; i < 5; i++)
+        {
+            pthread_join(tid[i], NULL);
+        }
+        if ((numbytes = sendto(sock_fd, done_buf, 5, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
+        {
+            perror("Central: ServerP sendto num nodes");
+            exit(1);
+        }
+        cout<< "Done with iteration" <<"\n";
+        transfer_complete = true;
 
+    } while (!transfer_complete);
     // Stop measuring time and calculate the elapsed time
     auto stop = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop-start);
-    cout << duration.count() <<"\n";
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+    cout << duration.count() << "\n";
 
     close(sock_fd);
     return 0;
