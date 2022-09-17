@@ -119,30 +119,22 @@ void *ClientSendTo(void *arg)
     GetUDPServerInfo(SERVER_IP, SERVER_THREAD_PORTS[thread_idx], servinfo);
     int sequence_num;
     int file_last_index = (FILE_SIZE - 1) / UDP_DATA_SIZE;
+    printf("Entering\n");
     while ((sequence_num = ReadQueue()) != -1)
     {
+        printf("Here2 %d\n", sequence_num);
         memcpy(&small_buf[5], &main_buf[sequence_num * UDP_DATA_SIZE], UDP_DATA_SIZE);
+        printf("Here3\n");
         memcpy(&small_buf, &sequence_num, sizeof(sequence_num));
+        printf("Here4\n");
         small_buf[4] = 0;
-        if (sequence_num == file_last_index)
+        if ((numbytes = sendto(sock_fd, small_buf, UDP_SIZE, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
         {
-            int send_size = FILE_SIZE - file_last_index * UDP_DATA_SIZE;
-            if ((numbytes = sendto(sock_fd, small_buf, send_size, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
-            {
-                perror("Sending Last Seq num packets");
-                exit(1);
-            }
-        }
-        else
-        {
-            if ((numbytes = sendto(sock_fd, small_buf, UDP_SIZE, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
-            {
-                perror("Sending Normal Seq num packets");
-                exit(1);
-            }
+            perror("Sending Normal Seq num packets");
+            exit(1);
         }
         // Remove delay if not needed
-        usleep(1000);
+        usleep(500);
         printf("sent %d\n", sequence_num);
     }
     cout << "Thread " << thread_idx << "exiting"
@@ -167,14 +159,16 @@ bool ReceiveAckFromServer(int sock_fd)
             perror("Receive from Server");
             exit(1);
         }
+        printf("Received Ack\n");
         if (numbytes == 1 && ack_buffer[0] == 1)
         {
+            printf("Final Ack\n");
             return true;
         }
         int temp;
         for (int i = 1; i < numbytes; i += 4)
-        {
-            memcpy(&temp, &ack_buffer[i], sizeof(temp));
+        { 
+            memcpy(&temp, &ack_buffer[i], sizeof(int));
             hashset.insert(temp);
         }
         if (ack_buffer[0])
@@ -226,17 +220,19 @@ int main(int argc, char *argv[])
     unordered_set<int> drop_sequence_num;
     int numbytes;
     char done_buf[] = {'0', '0', '0', '0', '1'};
+    pthread_t tid[5];
+    std::chrono::high_resolution_clock::time_point last_sent_packet_time;
     do
     {
-        pthread_t tid[5];
-        for (int i = 0; i < 5; i++)
+        for (int i = 0; i < NUM_THREADS; i++)
         {
             pthread_create(&tid[i], NULL, ClientSendTo, (void *)(intptr_t)i);
         }
-        for (int i = 0; i < 5; i++)
+        for (int i = 0; i < NUM_THREADS; i++)
         {
             pthread_join(tid[i], NULL);
         }
+        last_sent_packet_time = std::chrono::high_resolution_clock::now();
         // Send Iteration done packet 5 times
         for (int i = 0; i < 5; i++)
         {
@@ -252,8 +248,7 @@ int main(int argc, char *argv[])
 
     } while (!transfer_complete);
     // Stop measuring time and calculate the elapsed time
-    auto stop = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(last_sent_packet_time - start);
     cout << duration.count() << "\n";
     cout << "File Transfer Complete\n";
 
