@@ -219,12 +219,12 @@ int main(int argc, char *argv[])
     auto start = std::chrono::high_resolution_clock::now();
 
     bool transfer_complete = false;
-    pthread_t tid[5];
     unordered_set<int> drop_sequence_num;
     int numbytes;
     char done_buf[] = {'0', '0', '0', '0', '1'};
     do
     {
+        pthread_t tid[5];
         for (int i = 0; i < 5; i++)
         {
             pthread_create(&tid[i], NULL, ClientSendTo, (void *)(intptr_t)i);
