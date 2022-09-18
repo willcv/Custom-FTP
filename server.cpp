@@ -22,7 +22,7 @@
 #define RECV_T5_PORT "25585"
 #define SEND_PORT "25580"
 
-#define MAIN_BUF_SIZE 375552 //16*1024*1024
+#define MAIN_BUF_SIZE 65536*16384 //16*1024*1024
 #define UDP_SIZE 1472
 #define HEADER_SIZE 5
 #define UDP_DATA_SIZE (UDP_SIZE - HEADER_SIZE)
@@ -235,7 +235,7 @@ void *recv_thread(void* sockfd) {
             continue;
         }
    
-        printf("Here 1\n");
+  //      printf("Here 1\n");
         int seq_num;
         if (numbytes > 10) {
             memcpy(&seq_num, &localBuf, sizeof(seq_num));
@@ -246,7 +246,7 @@ void *recv_thread(void* sockfd) {
         int packet_itr_done = (localBuf[4]) & 0x01;
 
 
-        printf("Here 2\n");
+//        printf("Here 2\n");
         int continue_flag = 0;
         pthread_mutex_lock(&ack_sent_mutex);
         if (ack_sent) {
@@ -273,20 +273,20 @@ void *recv_thread(void* sockfd) {
         }
         else {
             // Data packet received. Store data in buffer
-            printf("Here 3 %d\n", seq_num);
+    //        printf("Here 3 %d\n", seq_num);
             pthread_mutex_lock(&mainBuf_mutex);
-            memcpy(&mainBuf[seq_num*UDP_DATA_SIZE], &localBuf[4], numbytes-5);
+            memcpy(&mainBuf[seq_num*UDP_DATA_SIZE], &localBuf[5], numbytes-5);
             pthread_mutex_unlock(&mainBuf_mutex);
 
             // Update hash
-            printf("Here 4\n");
+      //      printf("Here 4\n");
             pthread_mutex_lock(&hash_mutex);
             remaining_packet_hash.erase(seq_num);
             hash_size = remaining_packet_hash.size();
             pthread_mutex_unlock(&hash_mutex);
         }
         
-        printf("Here 5\n");
+        //printf("Here 5\n");
     }
 
     
@@ -327,7 +327,7 @@ int main()
         exit(1);
     }
  
-    for (int i = 0; i < MAX_SEQ_NUM; i++ ) {
+    for (int i = 0; i <= MAX_SEQ_NUM; i++ ) {
         remaining_packet_hash.insert(i);
     }
 
