@@ -21,6 +21,8 @@
 #include "common.h"
 
 using namespace std;
+using namespace std::chrono;
+
 
 ThreadsafeQueue<int> send_queue;
 char *main_buf;
@@ -131,7 +133,7 @@ void *ClientSendTo(void *arg)
     GetUDPServerInfo(SERVER_IP, SERVER_THREAD_PORTS[thread_idx], servinfo);
     int sequence_num;
     int file_last_index = (FILE_SIZE - 1) / UDP_DATA_SIZE;
-    printf("Entering\n");
+    printf("Starting Thread\n");
 
     int local_final_ack_recvd = 0;
 
@@ -139,6 +141,8 @@ void *ClientSendTo(void *arg)
     if (!start_set) {
         start = std::chrono::high_resolution_clock::now();
         start_set = 1;
+        cout << "Starting Timestamp: " << duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count() << endl;
+
     }
     pthread_mutex_unlock(&measure_time_mutex);
     while (!local_final_ack_recvd) {
@@ -152,10 +156,6 @@ void *ClientSendTo(void *arg)
         }
         int queue_size;
         queue_size = send_queue.size();
-        if (queue_size != 0) {
-            printf("Ack is done\n");
-            printf("Queue size %d\n", queue_size);
-        } 
         while ((sequence_num = ReadQueue()) != -1)
         {
             //printf("Here 1 %d\n", sequence_num);
@@ -176,9 +176,6 @@ void *ClientSendTo(void *arg)
             }
             for (int i = 0; i < num_duplicate_sends; i++) {
 
-                if (queue_size < 30) {
-                    printf("Seq no sent: %d\n", sequence_num);
-                }
                 if ((numbytes = sendto(sock_fd, small_buf, UDP_SIZE, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
                 {
                     perror("Sending Normal Seq num packets");
@@ -253,7 +250,7 @@ void * ReceiveAckFromServer(void *arg)
 
         // Send Iteration done packet 5 times
         char done_buf[] = {'0', '0', '0', '0', '1'};
-        for (int i = 0; i < 5; i++)
+        for (int i = 0; i < 6; i++)
         {
             if ((numbytes = sendto(send_sockfd, done_buf, 5, 0, servinfo->ai_addr, servinfo->ai_addrlen)) == -1)
             {
@@ -270,17 +267,13 @@ void * ReceiveAckFromServer(void *arg)
                 perror("Receive from Server");
                 exit(1);
             }
-            printf("Received Ack\n");
             int read_itr_num = 0;
             memcpy(&read_itr_num, &ack_buffer[1], 3);
-            printf("Iteration info recv: %d, curr %d\n", read_itr_num, itr_num);
             if (read_itr_num != itr_num) {
-                printf("Packet received from wrong iteration\n");
                 continue;
             }
             if (numbytes == 4 && ack_buffer[0] == 1)
             {
-                printf("Final Ack\n");
                 // Set final ack global flag, then ack done global flag
                 pthread_mutex_lock(&final_ack_recvd_mutex);
                 final_ack_recvd = 1;
@@ -294,7 +287,6 @@ void * ReceiveAckFromServer(void *arg)
                 pthread_mutex_lock(&thread_done_mutex);
                 send_thread_done = 0;
                 pthread_mutex_unlock(&thread_done_mutex);
-                printf("Received final Ack\n");
                 break;
             }
             int temp;
@@ -309,7 +301,6 @@ void * ReceiveAckFromServer(void *arg)
                 pthread_mutex_lock(&thread_done_mutex);
                 send_thread_done = 0;
                 pthread_mutex_unlock(&thread_done_mutex);
-                printf("Received last Ack\n");
             }
         }
         for (auto it = hashset.begin(); it != hashset.end(); ++it)
@@ -320,7 +311,6 @@ void * ReceiveAckFromServer(void *arg)
         pthread_mutex_lock(&ack_done_mutex);
         ack_done = 1;
         pthread_mutex_unlock(&ack_done_mutex);
-        printf("End of recv loop \n");
         itr_num ++;
     }   
     printf("Recv exiting\n");
@@ -329,12 +319,6 @@ void * ReceiveAckFromServer(void *arg)
 // Driver code
 int main(int argc, char *argv[])
 {
-    if (argc != 3)
-    {
-        printf("Invalid command\n");
-        printf("Usage: ./client [user@]SRC_HOST:]file1 [user@]DEST_HOST:]file2\n");
-        exit(1);
-    }
 
     int sock_fd = SetupUDPSocket(CLIENT_IP, CLIENT_MAIN_PORT);
 
@@ -375,7 +359,7 @@ int main(int argc, char *argv[])
          << "\n";
     // Stop measuring time and calculate the elapsed time
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
-    cout << duration.count() << "\n";
+    cout << "Transfer Time: " << duration.count() << "\n";
     cout << "File Transfer Complete\n";
 
     close(sock_fd);
