@@ -13,6 +13,8 @@
 #include <string>
 #include <unordered_set>
 #include <fstream>
+#include <chrono>
+#include <iostream>
 
 #define NUM_THREADS 4
 #define RECV_T1_PORT "25581"
@@ -34,7 +36,7 @@
 #define SERVER_IP "10.0.2.66"
 
 using namespace std;
-
+using namespace std::chrono;
 int recv_sockfd[5];
 int send_sockfd;
 int itr_done;
@@ -134,61 +136,43 @@ void *send_thread(void* serverinfo) {
         if (local_itr_done) {
             string ack_string = "";
             pthread_mutex_lock(&hash_mutex);
-            printf("Here 1\n");
             int * seq_no_arr = new int[remaining_packet_hash.size()];
             int i = 0;
             int remaining_acks_to_send = remaining_packet_hash.size();
-            printf("Remaining acks_to_send: %d\n", remaining_acks_to_send);
-            printf("Here 2\n");
+            //printf("Remaining acks_to_send: %d\n", remaining_acks_to_send);
+            //printf("Here 2\n");
             for (const auto& elem: remaining_packet_hash) {
                 seq_no_arr[i] = elem;
                 i++; 
             }  
-            printf("Here 3\n");
             
 	    int acks_sent = 0;
             while(remaining_acks_to_send) {
 
 
                 int packet_ack_num = min(UDP_ACK_SIZE/4, remaining_acks_to_send);
-                printf("Here 4\n");
                 memcpy(&localBuf[4], &seq_no_arr[acks_sent],  sizeof(int) * packet_ack_num);
-                for(int i = 0; i < min(5,packet_ack_num); i++) {
-                    printf("seq_no_arr: %d, %d\n", i, seq_no_arr[i]);
-                }
-                printf("Here 5\n");
                 acks_sent += packet_ack_num;
                 remaining_acks_to_send -= packet_ack_num;
-                printf("Here 1\n");
 
                 localBuf[0] = remaining_acks_to_send == 0 ? 1 : 0;
                 // Store 3 bytes of itr_num into local buf
                 memcpy(&localBuf[1], &itr_num, 3);
-                printf("Remaining Acks: %d\n", remaining_acks_to_send);
-                printf("Sending %d Acks, localbuf[0] %d, itr_num %d\n", packet_ack_num, localBuf[0], itr_num);
                 for (int i = 0; i < DUPLICATE_ACKS; i++) {
 
-                    usleep(1000);
-                    for (int i = 0; i < min(10, 4*packet_ack_num+4); i++)
-                    {
-                        printf("%02X", (unsigned char) localBuf[i]);
-                    } 
+                    usleep(600);
                     sendto(send_sockfd, localBuf, sizeof(int)*packet_ack_num+4, 0, servinfo->ai_addr, servinfo->ai_addrlen);
 
-                    printf("Sent Ack %d\n", i);
                 }
             } 
 
-            usleep(1000);                 
+            //usleep(1000);                 
             itr_num ++;
-            printf("Done sending ack packets\n");
-        
-        
+            printf("Iteration Done\n"); 
 	    pthread_mutex_unlock(&hash_mutex);
 
             pthread_mutex_lock(&ack_sent_mutex);
             ack_sent = 1;
-            printf("finished iteration\n");
             pthread_mutex_unlock(&ack_sent_mutex);
         }
         // Update hash size
@@ -198,7 +182,7 @@ void *send_thread(void* serverinfo) {
 
     }
 
-    printf("Final iteration num %d\n", itr_num);    
+    cout << "Ending Timestamp: " << duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count() << endl;
     // Sending Final Done Packet
     for (int i = 0; i < 20; i++) {
         char done_buf[4];
@@ -206,8 +190,8 @@ void *send_thread(void* serverinfo) {
         memcpy(&done_buf[1], &itr_num, 3);
         sendto(send_sockfd, done_buf, 4, 0, servinfo->ai_addr, servinfo->ai_addrlen);
 
-        printf("Sent Final Ack %d\n", i);
     }
+    printf("Sent Final Ack\n");
 }
 
 void *recv_thread(void* sockfd) {
@@ -230,8 +214,6 @@ void *recv_thread(void* sockfd) {
             pthread_mutex_lock(&hash_mutex);
             hash_size = remaining_packet_hash.size();
             pthread_mutex_unlock(&hash_mutex);
-            printf("timeout has occurred\n");
-            printf("Packets recvd %d\n", (MAX_SEQ_NUM - hash_size));
             continue;
         }
    
@@ -252,7 +234,7 @@ void *recv_thread(void* sockfd) {
         if (ack_sent) {
             if (!packet_itr_done) {
                 ack_sent = 0;
-                printf("Received data packet, unsetting ack_sent\n");
+          //      printf("Received data packet, unsetting ack_sent\n");
             } else {
                 continue_flag = 1;
             }
@@ -265,7 +247,7 @@ void *recv_thread(void* sockfd) {
         }
 
         if (packet_itr_done) {
-            printf("Itr done received\n");
+            //printf("Itr done received\n");
             // Done packet received. Set itr_done flag.
             pthread_mutex_lock(&itr_done_mutex);
             itr_done = 1;
@@ -293,12 +275,12 @@ void *recv_thread(void* sockfd) {
 }
 
 // Driver code
-int main()
+int main(int argc, char *argv[])
 {
 
     //struct addrinfo*5];
     // Set up receiving sockets
-
+    printf("File to write %s\n", argv[1]);
     recv_sockfd[0] = SetupUDPSocket(RECV_T1_PORT, SERVER_IP);
     recv_sockfd[1] = SetupUDPSocket(RECV_T2_PORT, SERVER_IP);
     recv_sockfd[2] = SetupUDPSocket(RECV_T3_PORT, SERVER_IP);
@@ -346,8 +328,11 @@ int main()
         close(recv_sockfd[i]);
     }
     close(send_sockfd);
-    auto myfile = std::fstream("file.out", std::ios::out | std::ios::binary);
+    printf("Done Receiving\n");
+    printf("Writing File\n");
+    auto myfile = std::fstream(argv[1], std::ios::out | std::ios::binary);
     myfile.write((char*)&mainBuf[0], MAIN_BUF_SIZE);
     myfile.close();
+    printf("Transfer complete!\n");
     return 0;
 }
